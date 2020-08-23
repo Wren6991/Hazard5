@@ -153,7 +153,7 @@ always @ (posedge clk or negedge rst_n) begin
 			// Post-increment if jump request is going straight through
 			fetch_addr <= {jump_target[W_ADDR-1:2] + (mem_addr_rdy && !mem_addr_hold), 2'b00};
 		end else if (mem_addr_vld && mem_addr_rdy) begin
-			fetch_addr <= fetch_addr + 3'h4;
+			fetch_addr <= fetch_addr + 32'h4;
 		end
 	end
 end
@@ -251,7 +251,7 @@ wire [3*W_BUNDLE-1:0] instr_data_shifted =
 
 // Saturating subtraction: on cir_lock dassertion,
 // buf_level will be 0 but cir_use will be positive!
-wire [1:0] cir_use_clipped = buf_level ? cir_use : 2'h0;
+wire [1:0] cir_use_clipped = |buf_level ? cir_use : 2'h0;
 
 wire [1:0] level_next_no_fetch = buf_level - cir_use_clipped;
 

@@ -508,7 +508,7 @@ always @ (*) begin
 		decode_match = 1'b1;
 		rdata = {
 			mcause_irq,      // Sign bit is 1 for IRQ, 0 for exception
-			{25{1'b0}},      // Padding
+			{26{1'b0}},      // Padding
 			mcause_code[4:0] // Enough for 16 external IRQs, which is all we have room for in mip/mie
 		};
 	end
@@ -742,15 +742,15 @@ hazard5_priority_encode #(
 
 wire [11:0] mtvec_offs = (exception_req_any ?
 	{8'h0, exception_req_num} :
-	12'h10 + irq_num
+	12'h10 + {7'h0, irq_num}
 ) << 2;
 
-assign trap_addr = mtvec | mtvec_offs;
+assign trap_addr = mtvec | {20'h0, mtvec_offs};
 assign trap_enter_vld = CSR_M_TRAP && (exception_req_any || irq_any);
 assign trap_is_exception = exception_req_any;
 
 assign mcause_irq_next = !exception_req_any;
-assign mcause_code_next = exception_req_any ? exception_req_num : irq_num;
+assign mcause_code_next = exception_req_any ? exception_req_num : {1'b0, irq_num};
 
 // ----------------------------------------------------------------------------
 

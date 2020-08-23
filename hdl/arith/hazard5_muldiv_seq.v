@@ -167,7 +167,7 @@ always @ (posedge clk or negedge rst_n) begin
 			ctr <= ctr - UNROLL[W_CTR-1:0];
 			accum <= accum_next;
 		end
-	end else if (ctr) begin
+	end else if (|ctr) begin
 		ctr <= ctr - UNROLL[W_CTR-1:0];
 		accum <= accum_next;
 	end else if (!sign_postadj_done || sign_postadj_carry) begin

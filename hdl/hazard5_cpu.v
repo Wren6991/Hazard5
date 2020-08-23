@@ -435,12 +435,12 @@ always @ (*) begin
 		x_rs2_bypass = dx_rdata2;
 	end
 
-	if (dx_alusrc_a)
+	if (|dx_alusrc_a)
 		x_op_a = dx_pc;
 	else
 		x_op_a = x_rs1_bypass;
 
-	if (dx_alusrc_b)
+	if (|dx_alusrc_b)
 		x_op_b = dx_imm;
 	else
 		x_op_b = x_rs2_bypass;
@@ -573,8 +573,6 @@ if (EXTENSION_M) begin: has_muldiv
 end else begin: no_muldiv
 
 	assign x_muldiv_result = {W_DATA{1'b0}};
-	assign x_muldiv_result_vld = 1'b1;
-
 	assign x_stall_muldiv = 1'b0;
 
 end
