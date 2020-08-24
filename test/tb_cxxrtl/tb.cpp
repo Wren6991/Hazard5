@@ -98,7 +98,8 @@ int main(int argc, char **argv) {
 	for (int cycle = 0; cycle < 100000; ++cycle) {
 		top.p_clk.set<bool>(false);
 		top.step();
-		vcd.sample(cycle * 2);
+		if (dump_waves)
+			vcd.sample(cycle * 2);
 		top.p_clk.set<bool>(true);
 		top.step();
 		// Handle current data phase, then move current address phase to data phase
@@ -139,7 +140,8 @@ int main(int argc, char **argv) {
 		bus_addr = top.p_ahblm__haddr.get<uint32_t>();
 
 		if (dump_waves) {
-			// The extra step() is just here to get the bus responses to line up nicely in the VCD
+			// The extra step() is just here to get the bus responses to line up nicely
+			// in the VCD (hopefully is a quick update)
 			top.step();
 			vcd.sample(cycle * 2 + 1);
 			waves_fd << vcd.buffer;

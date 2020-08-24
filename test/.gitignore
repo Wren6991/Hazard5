@@ -2,3 +2,5 @@
 *.out
 *.bin
 *.vcd
+
+*.log
