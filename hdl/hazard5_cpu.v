@@ -33,6 +33,9 @@ module hazard5_cpu #(
 	                                  // never change from this initial value. Bits set in MTVEC_WMASK can
 	                                  // be written/set/cleared as normal.
 
+	parameter REDUCED_BYPASS  = 0,    // Remove all forwarding paths except X->X
+	                                  // (so back-to-back ALU ops can still run at 1 CPI)
+
 	parameter W_ADDR          = 32,   // Do not modify
 	parameter W_DATA          = 32    // Do not modify
 ) (
@@ -377,7 +380,12 @@ assign x_stall = m_stall ||
 // Load-use hazard detection
 always @ (*) begin
 	x_stall_raw = 1'b0;
-	if (xm_memop < MEMOP_SW) begin
+	if (REDUCED_BYPASS) begin
+		x_stall_raw =
+			|xm_rd && (xm_rd == dx_rs1 || xm_rd == dx_rs2) ||
+			|mw_rd && (mw_rd == dx_rs1 || mw_rd == dx_rs2);
+	end else if (xm_memop < MEMOP_SW) begin
+		// With the full bypass network, load-use is the only RAW stall
 		if (|xm_rd && xm_rd == dx_rs1) begin
 			// Store addresses cannot be bypassed later, so there is no exception here.
 			x_stall_raw = 1'b1;
@@ -420,7 +428,7 @@ always @ (*) begin
 		x_rs1_bypass = {W_DATA{1'b0}};
 	end else if (xm_rd == dx_rs1) begin
 		x_rs1_bypass = xm_result;
-	end else if (mw_rd == dx_rs1) begin
+	end else if (mw_rd == dx_rs1 && !REDUCED_BYPASS) begin
 		x_rs1_bypass = mw_result;
 	end else begin
 		x_rs1_bypass = dx_rdata1;
@@ -429,7 +437,7 @@ always @ (*) begin
 		x_rs2_bypass = {W_DATA{1'b0}};
 	end else if (xm_rd == dx_rs2) begin
 		x_rs2_bypass = xm_result;
-	end else if (mw_rd == dx_rs2) begin
+	end else if (mw_rd == dx_rs2 && !REDUCED_BYPASS) begin
 		x_rs2_bypass = mw_result;
 	end else begin
 		x_rs2_bypass = dx_rdata2;
@@ -650,7 +658,7 @@ wire m_except_bus_fault = ahblm_hresp; // TODO: handle differently for LSU/ifetc
 
 always @ (*) begin
 	// Local forwarding of store data
-	if (|mw_rd && xm_rs2 == mw_rd) begin
+	if (|mw_rd && xm_rs2 == mw_rd && !REDUCED_BYPASS) begin
 		m_wdata = mw_result;
 	end else begin
 		m_wdata = xm_store_data;
