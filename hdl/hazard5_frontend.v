@@ -61,7 +61,7 @@ module hazard5_frontend #(
 // //synthesis translate_on
 
 localparam W_BUNDLE = W_DATA / 2;
-parameter W_FIFO_PTR = $clog2(FIFO_DEPTH + 1);
+parameter W_FIFO_LEVEL = $clog2(FIFO_DEPTH + 1);
 
 // ============================================================================
 // Fetch Queue (FIFO)
@@ -71,41 +71,38 @@ parameter W_FIFO_PTR = $clog2(FIFO_DEPTH + 1);
 
 wire jump_now = jump_target_vld && jump_target_rdy;
 
-reg [W_DATA-1:0] fifo_mem [0:FIFO_DEPTH-1];
-reg [W_FIFO_PTR-1:0] fifo_wptr;
-reg [W_FIFO_PTR-1:0] fifo_rptr;
-
-wire [W_FIFO_PTR-1:0] fifo_level = fifo_wptr - fifo_rptr;
-wire fifo_full = (fifo_wptr ^ fifo_rptr) == (1'b1 & {W_FIFO_PTR{1'b1}}) << (W_FIFO_PTR - 1);
-wire fifo_empty = fifo_wptr == fifo_rptr;
-wire fifo_almost_full = fifo_level == FIFO_DEPTH - 1;
+reg [W_DATA-1:0]     fifo_mem [0:FIFO_DEPTH];
+reg [FIFO_DEPTH-1:0] fifo_valid;
 
 wire fifo_push;
 wire fifo_pop;
-wire [W_DATA-1:0] fifo_wdata = mem_data;
-wire [W_DATA-1:0] fifo_rdata;
 
 always @ (posedge clk or negedge rst_n) begin
 	if (!rst_n) begin
-		fifo_wptr <= {W_FIFO_PTR{1'b0}};
-		fifo_rptr <= {W_FIFO_PTR{1'b0}};
-	end else begin
-		`ASSERT(!(fifo_pop && fifo_empty));
-		`ASSERT(!(fifo_push && fifo_full));
-		`ASSERT(fifo_level <= FIFO_DEPTH);
-		if (fifo_push) begin
-			fifo_wptr <= fifo_wptr + 1'b1;
-			fifo_mem[fifo_wptr & ~FIFO_DEPTH] <= fifo_wdata;
-		end
-		if (jump_now) begin
-			fifo_rptr <= fifo_wptr + fifo_push;
-		end else if (fifo_pop) begin
-			fifo_rptr <= fifo_rptr + 1'b1;
+		fifo_valid <= {FIFO_DEPTH{1'b0}};
+	end else if (jump_now) begin
+		fifo_valid <= {FIFO_DEPTH{1'b0}};
+	end else if (fifo_push || fifo_pop) begin
+		fifo_valid <= ~(~fifo_valid << fifo_push) >> fifo_pop;
+	end
+end
+
+always @ (posedge clk) begin: fifo_data_shift
+	integer i;
+	for (i = 0; i < FIFO_DEPTH; i = i + 1) begin
+		if (fifo_pop || (fifo_push && !fifo_valid[i])) begin
+			fifo_mem[i] <= fifo_valid[i + 1] ? fifo_mem[i + 1] : fifo_wdata;
 		end
 	end
 end
 
-assign fifo_rdata = fifo_mem[fifo_rptr & ~FIFO_DEPTH];
+wire [W_DATA-1:0] fifo_wdata = mem_data;
+wire [W_DATA-1:0] fifo_rdata = fifo_mem[0];
+always @ (*) fifo_mem[FIFO_DEPTH] = fifo_wdata;
+
+wire fifo_full = fifo_valid[FIFO_DEPTH - 1];
+wire fifo_empty = !fifo_valid[0];
+wire fifo_almost_full = FIFO_DEPTH == 1 || (!fifo_valid[FIFO_DEPTH - 1] && fifo_valid[FIFO_DEPTH - 2]);
 
 // ============================================================================
 // Fetch Request + State Logic
