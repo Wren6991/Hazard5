@@ -16,20 +16,7 @@
  *********************************************************************/
 
 module hazard5_core #(
-	parameter RESET_VECTOR    = 32'h0,
-	parameter EXTENSION_C     = 1,
-	parameter EXTENSION_M     = 1,
-	parameter MULDIV_UNROLL   = 1,
-
-	parameter CSR_M_MANDATORY = 1,
-	parameter CSR_M_TRAP      = 1,
-	parameter CSR_COUNTER     = 0,
-	parameter MTVEC_WMASK     = 32'hfffff000,
-	parameter MTVEC_INIT      = 32'h00000000,
-	parameter REDUCED_BYPASS  = 0,
-
-	parameter W_ADDR          = 32,   // Do not modify
-	parameter W_DATA          = 32    // Do not modify
+`include "hazard5_config.vh"
 ) (
 	// Global signals
 	input wire               clk,
