@@ -4,7 +4,7 @@
    are permitted in any medium without royalty provided the copyright
    notice and this notice are preserved.  */
 
-/* Modified from GCC default for RISCBoy */
+/* Modified from GCC default for hazard5 testbench */
 
 MEMORY
   {

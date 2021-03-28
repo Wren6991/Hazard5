@@ -7,7 +7,7 @@
 
 #define RV_COMPLIANCE_CODE_END
 
-#define MM_IO_EXIT 0x80000004
+#define MM_IO_EXIT 0x80000008
 
 .macro RV_COMPLIANCE_HALT
 .option push

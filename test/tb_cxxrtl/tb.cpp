@@ -15,8 +15,9 @@ uint8_t mem[MEM_SIZE];
 
 static const unsigned int IO_BASE = 0x80000000;
 enum {
-	IO_PRINT = 0,
-	IO_EXIT = 4
+	IO_PRINT_CHAR = 0,
+	IO_PRINT_U32  = 4,
+	IO_EXIT       = 8
 };
 
 const char *help_str =
@@ -113,8 +114,11 @@ int main(int argc, char **argv) {
 					mem[bus_addr + i] = wdata >> (8 * i) & 0xffu;
 				}
 			}
-			else if (bus_addr == IO_BASE + IO_PRINT) {
+			else if (bus_addr == IO_BASE + IO_PRINT_CHAR) {
 				putchar(wdata);
+			}
+			else if (bus_addr == IO_BASE + IO_PRINT_U32) {
+				printf("%08x\n", wdata);
 			}
 			else if (bus_addr == IO_BASE + IO_EXIT) {
 				printf("CPU requested halt. Exit code %d\n", wdata);
