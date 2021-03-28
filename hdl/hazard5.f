@@ -7,5 +7,6 @@ file hazard5_instr_decompress.v
 file hazard5_decode.v
 file hazard5_csr.v
 file hazard5_regfile_1w2r.v
-file hazard5_cpu.v
+file hazard5_core.v
+file hazard5_cpu_1port.v
 include .

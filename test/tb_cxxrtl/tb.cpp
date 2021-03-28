@@ -72,7 +72,7 @@ int main(int argc, char **argv) {
 		}
 	}
 
-	cxxrtl_design::p_hazard5__cpu top;
+	cxxrtl_design::p_hazard5__cpu__1port top;
 
 	std::fill(std::begin(mem), std::end(mem), 0);
 

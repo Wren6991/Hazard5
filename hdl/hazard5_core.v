@@ -15,26 +15,18 @@
  *                                                                    *
  *********************************************************************/
 
-module hazard5_cpu #(
-	parameter RESET_VECTOR    = 32'h0,// Address of first instruction executed
-	parameter EXTENSION_C     = 1,    // Support for compressed (variable-width) instructions
-	parameter EXTENSION_M     = 1,    // Support for hardware multiply/divide/modulo instructions
-	parameter MULDIV_UNROLL   = 1,    // Bits per clock for multiply/divide circuit, if present. Pow2.
+module hazard5_core #(
+	parameter RESET_VECTOR    = 32'h0,
+	parameter EXTENSION_C     = 1,
+	parameter EXTENSION_M     = 1,
+	parameter MULDIV_UNROLL   = 1,
 
-	parameter CSR_M_MANDATORY = 1,    // Bare minimum e.g. misa. Spec says must = 1, but I won't tell anyone
-	parameter CSR_M_TRAP      = 1,    // Include M-mode trap-handling CSRs
-	parameter CSR_COUNTER     = 0,    // Include performance counters and relevant M-mode CSRs
+	parameter CSR_M_MANDATORY = 1,
+	parameter CSR_M_TRAP      = 1,
+	parameter CSR_COUNTER     = 0,
 	parameter MTVEC_WMASK     = 32'hfffff000,
-	                                  // Save gates by making trap vector base partly fixed (legal, as it's WARL).
-	                                  // Note the entire vector table must always be aligned to its size, rounded
-	                                  // up to a power of two, so careful with the low-order bits.
 	parameter MTVEC_INIT      = 32'h00000000,
-	                                  // Initial value of trap vector base. Bits clear in MTVEC_WMASK will
-	                                  // never change from this initial value. Bits set in MTVEC_WMASK can
-	                                  // be written/set/cleared as normal.
-
-	parameter REDUCED_BYPASS  = 0,    // Remove all forwarding paths except X->X
-	                                  // (so back-to-back ALU ops can still run at 1 CPI)
+	parameter REDUCED_BYPASS  = 0,
 
 	parameter W_ADDR          = 32,   // Do not modify
 	parameter W_DATA          = 32    // Do not modify
@@ -47,18 +39,28 @@ module hazard5_cpu #(
 	`RVFI_OUTPUTS ,
 	`endif
 
-	// AHB-lite Master port
-	output reg  [W_ADDR-1:0] ahblm_haddr,
-	output reg               ahblm_hwrite,
-	output reg  [1:0]        ahblm_htrans,
-	output reg  [2:0]        ahblm_hsize,
-	output wire [2:0]        ahblm_hburst,
-	output wire [3:0]        ahblm_hprot,
-	output wire              ahblm_hmastlock,
-	input  wire              ahblm_hready,
-	input  wire              ahblm_hresp,
-	output reg  [W_DATA-1:0] ahblm_hwdata,
-	input  wire [W_DATA-1:0] ahblm_hrdata,
+	// Instruction fetch port
+	output wire              bus_aph_req_i,
+	output wire              bus_aph_panic_i, // e.g. branch mispredict + flush
+	input  wire              bus_aph_ready_i,
+	input  wire              bus_dph_ready_i,
+	input  wire              bus_dph_err_i,
+
+	output wire [2:0]        bus_hsize_i,
+	output wire [W_ADDR-1:0] bus_haddr_i,
+	input  wire [W_DATA-1:0] bus_rdata_i,
+
+	// Load/store port
+	output reg               bus_aph_req_d,
+	input  wire              bus_aph_ready_d,
+	input  wire              bus_dph_ready_d,
+	input  wire              bus_dph_err_d,
+
+	output reg  [W_ADDR-1:0] bus_haddr_d,
+	output reg  [2:0]        bus_hsize_d,
+	output reg               bus_hwrite_d,
+	output reg  [W_DATA-1:0] bus_wdata_d,
+	input  wire [W_DATA-1:0] bus_rdata_d,
 
 	// External level-sensitive interrupt sources (tie 0 if unused)
 	input wire [15:0]        irq
@@ -92,94 +94,17 @@ wire d_stall;
 wire x_stall;
 wire m_stall;
 
-// ============================================================================
-//                              AHB-lite Master
-// ============================================================================
-
-localparam HTRANS_IDLE = 2'b00;
-localparam HTRANS_NSEQ = 2'b10;
 localparam HSIZE_WORD  = 3'd2;
 localparam HSIZE_HWORD = 3'd1;
 localparam HSIZE_BYTE  = 3'd0;
 
-// Tie off AHB signals we don't care about
-assign ahblm_hburst = 3'b000;   // HBURST_SINGLE
-assign ahblm_hprot = 4'b0011;   // Lie and say everything is non-cacheable non-bufferable privileged data access
-assign ahblm_hmastlock = 1'b0;  // Not supported by processor (or by slaves!)
 
-// "regs" are all combinational signals from X.
-reg               ahb_req_d;
-reg  [W_ADDR-1:0] ahb_haddr_d;
-reg  [2:0]        ahb_hsize_d;
-reg               ahb_hwrite_d;
-wire              ahb_req_i;
-wire [2:0]        ahb_hsize_i;
-wire [W_ADDR-1:0] ahb_haddr_i;
-
-
-// Arbitrate requests from competing sources
-wire m_jump_req;
-wire ahb_gnt_i;
-wire ahb_gnt_d;
-
-reg       bus_hold_aph;
-reg [1:0] ahb_gnt_id_prev;
-
-always @ (posedge clk or negedge rst_n) begin
-	if (!rst_n) begin
-		bus_hold_aph <= 1'b0;
-		ahb_gnt_id_prev <= 2'h0;
-	end else begin
-		bus_hold_aph <= ahblm_htrans[1] && !ahblm_hready;
-		ahb_gnt_id_prev <= {ahb_gnt_i, ahb_gnt_d};
-	end
-end
-
-assign {ahb_gnt_i, ahb_gnt_d} =
-	bus_hold_aph ? ahb_gnt_id_prev :
-	m_jump_req   ? 2'b10 :
-	ahb_req_d    ? 2'b01 :
-	ahb_req_i    ? 2'b10 :
-	               2'b00 ;
-
-// Keep track of whether instr/data access is active in AHB dataphase.
-reg ahb_active_dph_i;
-reg ahb_active_dph_d;
-
-always @ (posedge clk or negedge rst_n) begin
-	if (!rst_n) begin
-		ahb_active_dph_i <= 1'b0;
-		ahb_active_dph_d <= 1'b0;
-	end else if (ahblm_hready) begin
-		ahb_active_dph_i <= ahb_gnt_i;
-		ahb_active_dph_d <= ahb_gnt_d;
-	end
-end
-
-// Address-phase signal passthrough
-always @ (*) begin
-	if (ahb_gnt_d) begin
-		ahblm_htrans = HTRANS_NSEQ;
-		ahblm_haddr  = ahb_haddr_d;
-		ahblm_hsize  = ahb_hsize_d;
-		ahblm_hwrite = ahb_hwrite_d;
-	end else if (ahb_gnt_i) begin
-		ahblm_htrans = HTRANS_NSEQ;
-		ahblm_haddr  = ahb_haddr_i;
-		ahblm_hsize  = ahb_hsize_i;
-		ahblm_hwrite = 1'b0;
-	end else begin
-		ahblm_htrans = HTRANS_IDLE;
-		ahblm_haddr  = {W_ADDR{1'b0}}; // TODO: make this the same as one of the others to save gates?
-		ahblm_hsize  = 3'h0;
-		ahblm_hwrite = 1'b0;
-	end
-end
 
 // ============================================================================
 //                               Pipe Stage F
 // ============================================================================
 
+wire              m_jump_req;
 wire [W_ADDR-1:0] m_jump_target;
 wire              d_jump_req;
 wire [W_ADDR-1:0] d_jump_target;
@@ -194,8 +119,10 @@ wire [1:0]  fd_cir_vld;
 wire [1:0]  df_cir_use;
 wire        df_cir_lock;
 
+assign bus_aph_panic_i = m_jump_req;
+
 wire f_mem_size;
-assign ahb_hsize_i = f_mem_size ? HSIZE_WORD : HSIZE_HWORD;
+assign bus_hsize_i = f_mem_size ? HSIZE_WORD : HSIZE_HWORD;
 
 hazard5_frontend #(
 	.EXTENSION_C(EXTENSION_C),
@@ -208,12 +135,12 @@ hazard5_frontend #(
 	.rst_n           (rst_n),
 
 	.mem_size        (f_mem_size),
-	.mem_addr        (ahb_haddr_i),
-	.mem_addr_vld    (ahb_req_i),
-	.mem_addr_rdy    (ahblm_hready && ahb_gnt_i),
+	.mem_addr        (bus_haddr_i),
+	.mem_addr_vld    (bus_aph_req_i),
+	.mem_addr_rdy    (bus_aph_ready_i),
 
-	.mem_data        (ahblm_hrdata),
-	.mem_data_vld    (ahblm_hready && ahb_active_dph_i),
+	.mem_data        (bus_rdata_i),
+	.mem_data_vld    (bus_dph_ready_i),
 
 	.jump_target     (f_jump_target),
 	.jump_target_vld (f_jump_req),
@@ -375,7 +302,7 @@ reg x_stall_raw;
 wire x_stall_muldiv;
 
 assign x_stall = m_stall ||
-	x_stall_raw || x_stall_muldiv || ahb_req_d && !(ahb_gnt_d && ahblm_hready);
+	x_stall_raw || x_stall_muldiv || bus_aph_req_d && !bus_aph_ready_d;
 
 // Load-use hazard detection
 always @ (*) begin
@@ -401,25 +328,25 @@ end
 wire x_memop_vld = !dx_memop[3];
 wire x_memop_write = dx_memop == MEMOP_SW || dx_memop == MEMOP_SH || dx_memop == MEMOP_SB;
 wire x_unaligned_addr =
-	ahb_hsize_d == HSIZE_WORD && |ahb_haddr_d[1:0] ||
-	ahb_hsize_d == HSIZE_HWORD && ahb_haddr_d[0];
+	bus_hsize_d == HSIZE_WORD && |bus_haddr_d[1:0] ||
+	bus_hsize_d == HSIZE_HWORD && bus_haddr_d[0];
 
 wire x_except_load_misaligned = x_memop_vld && x_unaligned_addr && !x_memop_write;
 wire x_except_store_misaligned = x_memop_vld && x_unaligned_addr && x_memop_write;
 
 always @ (*) begin
 	// Need to be careful not to use anything hready-sourced to gate htrans!
-	ahb_haddr_d = x_alu_add;
-	ahb_hwrite_d = x_memop_write;
+	bus_haddr_d = x_alu_add;
+	bus_hwrite_d = x_memop_write;
 	case (dx_memop)
-		MEMOP_LW:  ahb_hsize_d = HSIZE_WORD;
-		MEMOP_SW:  ahb_hsize_d = HSIZE_WORD;
-		MEMOP_LH:  ahb_hsize_d = HSIZE_HWORD;
-		MEMOP_LHU: ahb_hsize_d = HSIZE_HWORD;
-		MEMOP_SH:  ahb_hsize_d = HSIZE_HWORD;
-		default:   ahb_hsize_d = HSIZE_BYTE;
+		MEMOP_LW:  bus_hsize_d = HSIZE_WORD;
+		MEMOP_SW:  bus_hsize_d = HSIZE_WORD;
+		MEMOP_LH:  bus_hsize_d = HSIZE_HWORD;
+		MEMOP_LHU: bus_hsize_d = HSIZE_HWORD;
+		MEMOP_SH:  bus_hsize_d = HSIZE_HWORD;
+		default:   bus_hsize_d = HSIZE_BYTE;
 	endcase
-	ahb_req_d = x_memop_vld && !(x_stall_raw || flush_d_x || x_trap_enter);
+	bus_aph_req_d = x_memop_vld && !(x_stall_raw || flush_d_x || x_trap_enter);
 end
 
 // ALU operand muxes and bypass
@@ -468,7 +395,7 @@ always @ (posedge clk) begin
 	if (flush_d_x)
 		assert(!x_trap_enter_rdy);
 	if (x_trap_exit)
-		assert(!ahb_req_d);
+		assert(!bus_aph_req_d);
 end
 `endif
 
@@ -652,9 +579,9 @@ reg [W_DATA-1:0] m_result;
 assign m_jump_req = xm_jump;
 assign m_jump_target = xm_jump_target;
 
-assign m_stall = (ahb_active_dph_d && !ahblm_hready) || (m_jump_req && !f_jump_rdy);
+assign m_stall = (!xm_memop[3] && !bus_dph_ready_d) || (m_jump_req && !f_jump_rdy);
 
-wire m_except_bus_fault = ahblm_hresp; // TODO: handle differently for LSU/ifetch?
+wire m_except_bus_fault = bus_dph_err_d; // TODO: handle differently for LSU/ifetch?
 
 always @ (*) begin
 	// Local forwarding of store data
@@ -665,18 +592,18 @@ always @ (*) begin
 	end
 	// Replicate store data to ensure appropriate byte lane is driven
 	case (xm_memop)
-		MEMOP_SW: ahblm_hwdata = m_wdata;
-		MEMOP_SH: ahblm_hwdata = {2{m_wdata[15:0]}};
-		MEMOP_SB: ahblm_hwdata = {4{m_wdata[7:0]}};
-		default:  ahblm_hwdata = 32'h0;
+		MEMOP_SW: bus_wdata_d = m_wdata;
+		MEMOP_SH: bus_wdata_d = {2{m_wdata[15:0]}};
+		MEMOP_SB: bus_wdata_d = {4{m_wdata[7:0]}};
+		default:  bus_wdata_d = 32'h0;
 	endcase
 	// Pick out correct data from load access, and sign/unsign extend it.
 	// This is slightly cheaper than a normal shift:
 	case (xm_result[1:0])
-		2'b00: m_rdata_shift = ahblm_hrdata;
-		2'b01: m_rdata_shift = {ahblm_hrdata[31:8],  ahblm_hrdata[15:8]};
-		2'b10: m_rdata_shift = {ahblm_hrdata[31:16], ahblm_hrdata[31:16]};
-		2'b11: m_rdata_shift = {ahblm_hrdata[31:8],  ahblm_hrdata[31:24]};
+		2'b00: m_rdata_shift = bus_rdata_d;
+		2'b01: m_rdata_shift = {bus_rdata_d[31:8],  bus_rdata_d[15:8]};
+		2'b10: m_rdata_shift = {bus_rdata_d[31:16], bus_rdata_d[31:16]};
+		2'b11: m_rdata_shift = {bus_rdata_d[31:8],  bus_rdata_d[31:24]};
 	endcase
 
 	case (xm_memop)
@@ -699,7 +626,7 @@ always @ (posedge clk or negedge rst_n) begin
 			$display("Bus fault!");
 			$finish;
 		end
-		if (^ahblm_hwdata === 1'bX) begin
+		if (^bus_wdata_d === 1'bX) begin
 			$display("Writing Xs to memory!");
 			$finish;
 		end

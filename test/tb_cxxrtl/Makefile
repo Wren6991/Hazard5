@@ -9,13 +9,13 @@ REDUCED_BYPASS   := 0
 all: tb
 
 SYNTH_CMD += read_verilog -I ../../hdl $(shell listfiles ../../hdl/hazard5.f);
-SYNTH_CMD += chparam -set EXTENSION_C $(EXTENSION_C) hazard5_cpu;
-SYNTH_CMD += chparam -set EXTENSION_M $(EXTENSION_M) hazard5_cpu;
-SYNTH_CMD += chparam -set CSR_COUNTER 1 hazard5_cpu;
-SYNTH_CMD += chparam -set RESET_VECTOR $(CPU_RESET_VECTOR) hazard5_cpu;
-SYNTH_CMD += chparam -set REDUCED_BYPASS $(REDUCED_BYPASS) hazard5_cpu;
-SYNTH_CMD += chparam -set MULDIV_UNROLL $(MULDIV_UNROLL) hazard5_cpu;
-SYNTH_CMD += prep -flatten -top hazard5_cpu; async2sync;
+SYNTH_CMD += chparam -set EXTENSION_C $(EXTENSION_C) hazard5_cpu_1port;
+SYNTH_CMD += chparam -set EXTENSION_M $(EXTENSION_M) hazard5_cpu_1port;
+SYNTH_CMD += chparam -set CSR_COUNTER 1 hazard5_cpu_1port;
+SYNTH_CMD += chparam -set RESET_VECTOR $(CPU_RESET_VECTOR) hazard5_cpu_1port;
+SYNTH_CMD += chparam -set REDUCED_BYPASS $(REDUCED_BYPASS) hazard5_cpu_1port;
+SYNTH_CMD += chparam -set MULDIV_UNROLL $(MULDIV_UNROLL) hazard5_cpu_1port;
+SYNTH_CMD += prep -flatten -top hazard5_cpu_1port; async2sync;
 SYNTH_CMD += write_cxxrtl dut.cpp
 
 dut.cpp:
