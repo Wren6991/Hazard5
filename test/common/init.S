@@ -11,6 +11,7 @@
 
 .option push
 .option norelax
+.option norvc
 
 .section .vectors
 

@@ -21,11 +21,13 @@ enum {
 };
 
 const char *help_str =
-"Usage: tb binfile [vcdfile] [--dump start end]\n"
+"Usage: tb binfile [vcdfile] [--dump start end] [--cycles n]\n"
 "    binfile          : Binary to load into start of memory\n"
 "    vcdfile          : Path to dump waveforms to\n"
 "    --dump start end : Print out memory contents between start and end (exclusive)\n"
-"                       after execution finishes. Can be passed multiple times.\n";
+"                       after execution finishes. Can be passed multiple times.\n"
+"    --cycles n       : Maximum number of cycles to run before exiting.\n"
+;
 
 void exit_help(std::string errtext = "") {
 	std::cerr << errtext << help_str;
@@ -40,6 +42,7 @@ int main(int argc, char **argv) {
 	bool dump_waves = false;
 	std::string waves_path;
 	std::vector<std::pair<uint32_t, uint32_t>> dump_ranges;
+	int64_t max_cycles = 100000;
 
 	for (int i = 2; i < argc; ++i) {
 		std::string s(argv[i]);
@@ -50,11 +53,22 @@ int main(int argc, char **argv) {
 		}
 		else if (s == "--dump") {
 			if (argc - i < 3)
-				exit_help("Option --dump requires 3 arguments\n");
+				exit_help("Option --dump requires 2 arguments\n");
 			dump_ranges.push_back(std::pair<uint32_t, uint32_t>(
 				std::stoul(argv[i + 1], 0, 0),
 				std::stoul(argv[i + 2], 0, 0)
 			));;
+			i += 2;
+		}
+		else if (s == "--cycles") {
+			if (argc - i < 2)
+				exit_help("Option --cycles requires an argument\n");
+			max_cycles = std::stol(argv[i + 1], 0, 0);
+			i += 1;
+		}
+		else {
+			std::cerr << "Unrecognised argument " << s << "\n";
+			exit_help("");
 		}
 	}
 
@@ -96,7 +110,7 @@ int main(int argc, char **argv) {
 	top.p_rst__n.set<bool>(true);
 	top.step();
 
-	for (int cycle = 0; cycle < 100000; ++cycle) {
+	for (int cycle = 0; cycle < max_cycles; ++cycle) {
 		top.p_clk.set<bool>(false);
 		top.step();
 		if (dump_waves)
