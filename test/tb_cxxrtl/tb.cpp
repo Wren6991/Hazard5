@@ -72,7 +72,11 @@ int main(int argc, char **argv) {
 		}
 	}
 
+#ifdef DUAL_PORT
+	cxxrtl_design::p_hazard5__cpu__2port top;
+#else
 	cxxrtl_design::p_hazard5__cpu__1port top;
+#endif
 
 	std::fill(std::begin(mem), std::end(mem), 0);
 
@@ -97,10 +101,19 @@ int main(int argc, char **argv) {
 
 	bool bus_trans = false;
 	bool bus_write = false;
+#ifdef DUAL_PORT
+	bool bus_trans_i = false;
+	uint32_t bus_addr_i = 0;
+#endif
 	uint32_t bus_addr = 0;
 	uint8_t bus_size = 0;
 	// Never generate bus stalls
+#ifdef DUAL_PORT
+	top.p_i__hready.set<bool>(true);
+	top.p_d__hready.set<bool>(true);
+#else
 	top.p_ahblm__hready.set<bool>(true);
+#endif
 
 	// Reset + initial clock pulse
 	top.step();
@@ -110,7 +123,7 @@ int main(int argc, char **argv) {
 	top.p_rst__n.set<bool>(true);
 	top.step();
 
-	for (int cycle = 0; cycle < max_cycles; ++cycle) {
+	for (int64_t cycle = 0; cycle < max_cycles; ++cycle) {
 		top.p_clk.set<bool>(false);
 		top.step();
 		if (dump_waves)
@@ -120,7 +133,11 @@ int main(int argc, char **argv) {
 		// Handle current data phase, then move current address phase to data phase
 		uint32_t rdata = 0;
 		if (bus_trans && bus_write) {
+#ifdef DUAL_PORT
+			uint32_t wdata = top.p_d__hwdata.get<uint32_t>();
+#else
 			uint32_t wdata = top.p_ahblm__hwdata.get<uint32_t>();
+#endif
 			if (bus_addr <= MEM_SIZE) {
 				unsigned int n_bytes = 1u << bus_size;
 				// Note we are relying on hazard5's byte lane replication
@@ -136,7 +153,7 @@ int main(int argc, char **argv) {
 			}
 			else if (bus_addr == IO_BASE + IO_EXIT) {
 				printf("CPU requested halt. Exit code %d\n", wdata);
-				printf("Ran for %d cycles\n", cycle + 1);
+				printf("Ran for %ld cycles\n", cycle + 1);
 				break;
 			}
 		}
@@ -150,12 +167,34 @@ int main(int argc, char **argv) {
 					mem[bus_addr + 3] << 24;
 			}
 		}
+#ifdef DUAL_PORT
+		top.p_d__hrdata.set<uint32_t>(rdata);
+		if (bus_trans_i) {
+			bus_addr_i &= ~0x3u;
+			top.p_i__hrdata.set<uint32_t>(
+				(uint32_t)mem[bus_addr_i] |
+				mem[bus_addr_i + 1] << 8 |
+				mem[bus_addr_i + 2] << 16 |
+				mem[bus_addr_i + 3] << 24
+			);
+		}
+#else
 		top.p_ahblm__hrdata.set<uint32_t>(rdata);
+#endif
 
+#ifdef DUAL_PORT
+		bus_trans = top.p_d__htrans.get<uint8_t>() >> 1;
+		bus_write = top.p_d__hwrite.get<bool>();
+		bus_size = top.p_d__hsize.get<uint8_t>();
+		bus_addr = top.p_d__haddr.get<uint32_t>();
+		bus_trans_i = top.p_i__htrans.get<uint8_t>() >> 1;
+		bus_addr_i = top.p_i__haddr.get<uint32_t>();
+#else
 		bus_trans = top.p_ahblm__htrans.get<uint8_t>() >> 1;
 		bus_write = top.p_ahblm__hwrite.get<bool>();
 		bus_size = top.p_ahblm__hsize.get<uint8_t>();
 		bus_addr = top.p_ahblm__haddr.get<uint32_t>();
+#endif
 
 		if (dump_waves) {
 			// The extra step() is just here to get the bus responses to line up nicely
