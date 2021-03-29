@@ -182,8 +182,13 @@ always @ (posedge clk or negedge rst_n) begin
 		if (mem_addr_rdy || (jump_now && !unaligned_jump_now)) begin
 			unaligned_jump_aph <= 1'b0;
 		end
-		if ((mem_data_vld && ~|ctr_flush_pending)
+		if ((mem_data_vld && ~|ctr_flush_pending && !cir_lock)
 			|| (jump_now && !unaligned_jump_now)) begin
+			unaligned_jump_dph <= 1'b0;
+		end
+		if (fifo_pop) begin
+			// Following a lock/unlock of the CIR, we may have an unaligned fetch in
+			// the FIFO, rather than consuming straight from the bus.
 			unaligned_jump_dph <= 1'b0;
 		end
 		if (unaligned_jump_now) begin
@@ -265,7 +270,7 @@ assign cir_must_refill = !cir_lock && !level_next_no_fetch[1];
 assign fifo_pop = cir_must_refill && !fifo_empty;
 
 wire [1:0] buf_level_next =
-	jump_now || |ctr_flush_pending ? 2'h0 :
+	jump_now || |ctr_flush_pending || cir_lock ? 2'h0 :
 	fetch_data_vld && unaligned_jump_dph ? 2'h1 :
 	buf_level + {cir_must_refill && fetch_data_vld, 1'b0} - cir_use_clipped;
 
