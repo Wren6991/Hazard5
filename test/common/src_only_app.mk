@@ -11,6 +11,7 @@ LDSCRIPT     ?= ../common/memmap.ld
 CROSS_PREFIX ?= riscv32-unknown-elf-
 TBDIR        ?= ../tb_cxxrtl
 INCDIR       ?= ../common
+MAX_CYCLES   ?= 100000
 
 ###############################################################################
 
@@ -20,7 +21,7 @@ INCDIR       ?= ../common
 all: run
 
 run: $(APP).bin
-	$(TBDIR)/tb $(APP).bin $(APP)_run.vcd
+	$(TBDIR)/tb $(APP).bin $(APP)_run.vcd --cycles $(MAX_CYCLES)
 
 view: run
 	gtkwave $(APP)_run.vcd
