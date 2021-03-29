@@ -97,8 +97,24 @@ j \name
 	jal _start
 	j .halt
 
+.global _exit
+_exit:
+	li a1, IO_EXIT
+	sw a0, (a1)
+
+.global _sbrk
+_sbrk:
+	la a1, heap_ptr
+	lw a2, (a1)
+	add a0, a0, a2
+	sw a0, (a1)
+	mv a0, a2
+	ret
+
+heap_ptr:
+	.word _end
+
 .global .halt
-.type .halt,%function
 .halt:
 	j .halt
 
