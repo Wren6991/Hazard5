@@ -5,6 +5,7 @@ CPU_RESET_VECTOR := 32'hc0
 EXTENSION_C      := 1
 EXTENSION_M      := 1
 MULDIV_UNROLL    := 1
+MUL_FAST         := 0
 REDUCED_BYPASS   := 0
 
 .PHONY: clean tb all
@@ -18,6 +19,7 @@ SYNTH_CMD += chparam -set CSR_COUNTER 1 $(TOP);
 SYNTH_CMD += chparam -set RESET_VECTOR $(CPU_RESET_VECTOR) $(TOP);
 SYNTH_CMD += chparam -set REDUCED_BYPASS $(REDUCED_BYPASS) $(TOP);
 SYNTH_CMD += chparam -set MULDIV_UNROLL $(MULDIV_UNROLL) $(TOP);
+SYNTH_CMD += chparam -set MUL_FAST $(MUL_FAST) $(TOP);
 SYNTH_CMD += prep -flatten -top $(TOP); async2sync;
 SYNTH_CMD += write_cxxrtl dut.cpp
 

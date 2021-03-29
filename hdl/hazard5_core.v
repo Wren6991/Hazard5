@@ -291,6 +291,9 @@ wire x_stall_muldiv;
 assign x_stall = m_stall ||
 	x_stall_raw || x_stall_muldiv || bus_aph_req_d && !bus_aph_ready_d;
 
+wire m_fast_mul_result_vld;
+wire m_generating_result = xm_memop < MEMOP_SW || m_fast_mul_result_vld;
+
 // Load-use hazard detection
 always @ (*) begin
 	x_stall_raw = 1'b0;
@@ -298,8 +301,8 @@ always @ (*) begin
 		x_stall_raw =
 			|xm_rd && (xm_rd == dx_rs1 || xm_rd == dx_rs2) ||
 			|mw_rd && (mw_rd == dx_rs1 || mw_rd == dx_rs2);
-	end else if (xm_memop < MEMOP_SW) begin
-		// With the full bypass network, load-use is the only RAW stall
+	end else if (m_generating_result) begin
+		// With the full bypass network, load-use (or fast multiply-use) is the only RAW stall
 		if (|xm_rd && xm_rd == dx_rs1) begin
 			// Store addresses cannot be bypassed later, so there is no exception here.
 			x_stall_raw = 1'b1;
@@ -443,6 +446,7 @@ hazard5_csr #(
 // Multiply/divide
 
 wire [W_DATA-1:0] x_muldiv_result;
+wire [W_DATA-1:0] m_fast_mul_result;
 
 generate
 if (EXTENSION_M) begin: has_muldiv
@@ -460,8 +464,11 @@ if (EXTENSION_M) begin: has_muldiv
 			x_muldiv_posted <= (x_muldiv_posted || (x_muldiv_op_vld && x_muldiv_op_rdy)) && x_stall;
 
 	wire x_muldiv_kill = flush_d_x || x_trap_enter; // TODO this takes an extra cycle to kill muldiv before trap entry
-	assign x_muldiv_op_vld = dx_aluop == ALUOP_MULDIV && !x_muldiv_posted
-		&& !x_stall_raw && !x_muldiv_kill;
+
+	wire x_use_fast_mul = MUL_FAST && dx_aluop == ALUOP_MULDIV && dx_mulop == M_OP_MUL;
+
+	assign x_muldiv_op_vld = (dx_aluop == ALUOP_MULDIV && !x_use_fast_mul)
+		&& !(x_muldiv_posted || x_stall_raw || x_muldiv_kill);
 
 	hazard5_muldiv_seq #(
 		.XLEN   (W_DATA),
@@ -491,6 +498,31 @@ if (EXTENSION_M) begin: has_muldiv
 	assign x_muldiv_result = x_muldiv_result_is_high ? x_muldiv_result_h : x_muldiv_result_l;
 	assign x_stall_muldiv = x_muldiv_op_vld || !x_muldiv_result_vld;
 
+	if (MUL_FAST) begin: has_fast_mul
+
+		wire x_issue_fast_mul = x_use_fast_mul && |dx_rd && !(x_stall || flush_d_x);
+
+		hazard5_mul_fast #(
+			.XLEN(W_DATA)
+		) inst_hazard5_mul_fast (
+			.clk        (clk),
+			.rst_n      (rst_n),
+
+			.op_a       (x_rs1_bypass),
+			.op_b       (x_rs2_bypass),
+			.op_vld     (x_issue_fast_mul),
+
+			.result     (m_fast_mul_result),
+			.result_vld (m_fast_mul_result_vld)
+		);
+
+	end else begin: no_fast_mul
+
+		assign m_fast_mul_result = {W_DATA{1'b0}};
+		assign m_fast_mul_result_vld = 1'b0;
+
+	end
+
 `ifdef FORMAL
 	always @ (posedge clk) if (dx_aluop != ALUOP_MULDIV) assert(!x_stall_muldiv);
 `endif
@@ -498,6 +530,8 @@ if (EXTENSION_M) begin: has_muldiv
 end else begin: no_muldiv
 
 	assign x_muldiv_result = {W_DATA{1'b0}};
+	assign m_fast_mul_result = {W_DATA{1'b0}};
+	assign m_fast_mul_result_vld = 1'b0;
 	assign x_stall_muldiv = 1'b0;
 
 end
@@ -602,7 +636,13 @@ always @ (*) begin
 		MEMOP_LHU: m_result = {16'h0, m_rdata_shift[15:0]};
 		MEMOP_LB:  m_result = {{24{m_rdata_shift[7]}}, m_rdata_shift[7:0]};
 		MEMOP_LBU: m_result = {24'h0, m_rdata_shift[7:0]};
-		default:   m_result = xm_result;
+		default:   begin
+			if (MUL_FAST && m_fast_mul_result_vld) begin
+				m_result = m_fast_mul_result;
+			end else begin
+				m_result = xm_result;
+			end
+		end
 	endcase
 end
 

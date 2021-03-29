@@ -46,6 +46,11 @@ parameter REDUCED_BYPASS  = 0,
 // be a power of 2.
 parameter MULDIV_UNROLL   = 1,
 
+// MUL_FAST: Use single-cycle multiply circuit for MUL instructions, retiring
+// to stage M. The sequential multiply/divide circuit is still used for
+// MULH/MULHU/MULHSU.
+parameter MUL_FAST        = 0,
+
 // MTVEC_WMASK: Mask of which bits in MTVEC are modifiable. Save gates by
 // making trap vector base partly fixed (legal, as it's WARL). Note the entire
 // vector table must always be aligned to its size, rounded up to a power of
