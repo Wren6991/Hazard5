@@ -170,7 +170,7 @@ reg dphase_active_d;
 always @ (posedge clk or negedge rst_n)
 	if (!rst_n)
 		dphase_active_d <= 1'b0;
-	else if (i_hready)
+	else if (d_hready)
 		dphase_active_d <= core_aph_req_d;
 
 assign core_aph_ready_d = d_hready && core_aph_req_d;
