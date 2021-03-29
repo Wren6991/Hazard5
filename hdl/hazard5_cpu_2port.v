@@ -15,11 +15,11 @@
  *                                                                    *
  *********************************************************************/
 
-// Single-ported top level file for Hazard5 CPU. This file instantiates the
-// Hazard5 core, and arbitrates its instruction fetch and load/store signals
-// down to a single AHB-Lite master port.
+// Dual-ported top level file for Hazard5 CPU. This file instantiates the
+// Hazard5 core, and interfaces its instruction fetch and load/store signals
+// to a pair of AHB-Lite master ports.
 
-module hazard5_cpu_1port #(
+module hazard5_cpu_2port #(
 `include "hazard5_config.vh"
 ) (
 	// Global signals
@@ -30,18 +30,31 @@ module hazard5_cpu_1port #(
 	`RVFI_OUTPUTS ,
 	`endif
 
-	// AHB-lite Master port
-	output reg  [W_ADDR-1:0] ahblm_haddr,
-	output reg               ahblm_hwrite,
-	output reg  [1:0]        ahblm_htrans,
-	output reg  [2:0]        ahblm_hsize,
-	output wire [2:0]        ahblm_hburst,
-	output reg  [3:0]        ahblm_hprot,
-	output wire              ahblm_hmastlock,
-	input  wire              ahblm_hready,
-	input  wire              ahblm_hresp,
-	output wire [W_DATA-1:0] ahblm_hwdata,
-	input  wire [W_DATA-1:0] ahblm_hrdata,
+	// Instruction fetch port
+	output wire [W_ADDR-1:0] i_haddr,
+	output wire              i_hwrite,
+	output wire [1:0]        i_htrans,
+	output wire [2:0]        i_hsize,
+	output wire [2:0]        i_hburst,
+	output wire [3:0]        i_hprot,
+	output wire              i_hmastlock,
+	input  wire              i_hready,
+	input  wire              i_hresp,
+	output wire [W_DATA-1:0] i_hwdata,
+	input  wire [W_DATA-1:0] i_hrdata,
+
+	// Load/store port
+	output wire [W_ADDR-1:0] d_haddr,
+	output wire              d_hwrite,
+	output wire [1:0]        d_htrans,
+	output wire [2:0]        d_hsize,
+	output wire [2:0]        d_hburst,
+	output wire [3:0]        d_hprot,
+	output wire              d_hmastlock,
+	input  wire              d_hready,
+	input  wire              d_hresp,
+	output wire [W_DATA-1:0] d_hwdata,
+	input  wire [W_DATA-1:0] d_hrdata,
 
 	// External level-sensitive interrupt sources (tie 0 if unused)
 	input wire [15:0]        irq
@@ -52,7 +65,7 @@ module hazard5_cpu_1port #(
 
 // Instruction fetch signals
 wire              core_aph_req_i;
-wire              core_aph_panic_i;
+wire              core_aph_panic_i; // unused as there's no arbitration
 wire              core_aph_ready_i;
 wire              core_dph_ready_i;
 wire              core_dph_err_i;
@@ -116,97 +129,59 @@ hazard5_core #(
 	.irq             (irq)
 );
 
-
 // ----------------------------------------------------------------------------
-// Arbitration state machine
-
-wire      bus_gnt_i;
-wire      bus_gnt_d;
-
-reg       bus_hold_aph;
-reg [1:0] bus_gnt_id_prev;
-
-always @ (posedge clk or negedge rst_n) begin
-	if (!rst_n) begin
-		bus_hold_aph <= 1'b0;
-		bus_gnt_id_prev <= 2'h0;
-	end else begin
-		bus_hold_aph <= ahblm_htrans[1] && !ahblm_hready;
-		bus_gnt_id_prev <= {bus_gnt_i, bus_gnt_d};
-	end
-end
-
-assign {bus_gnt_i, bus_gnt_d} =
-	bus_hold_aph     ? bus_gnt_id_prev :
-	core_aph_panic_i ? 2'b10 :
-	core_aph_req_d   ? 2'b01 :
-	core_aph_req_i   ? 2'b10 :
-	                   2'b00 ;
-
-// Keep track of whether instr/data access is active in AHB dataphase.
-reg bus_active_dph_i;
-reg bus_active_dph_d;
-
-always @ (posedge clk or negedge rst_n) begin
-	if (!rst_n) begin
-		bus_active_dph_i <= 1'b0;
-		bus_active_dph_d <= 1'b0;
-	end else if (ahblm_hready) begin
-		bus_active_dph_i <= bus_gnt_i;
-		bus_active_dph_d <= bus_gnt_d;
-	end
-end
-
-// ----------------------------------------------------------------------------
-// Address phase request muxing
+// Instruction port
 
 localparam HTRANS_IDLE = 2'b00;
 localparam HTRANS_NSEQ = 2'b10;
 
-// Noncacheable nonbufferable privileged data/instr:
-localparam HPROT_DATA  = 4'b0011;
-localparam HPROT_INSTR = 4'b0010;
+assign i_haddr = core_haddr_i;
+assign i_htrans = core_aph_req_i ? HTRANS_NSEQ : HTRANS_IDLE;
+assign i_hsize = core_hsize_i;
 
-assign ahblm_hburst = 3'b000;   // HBURST_SINGLE
-assign ahblm_hmastlock = 1'b0;
+reg dphase_active_i;
+always @ (posedge clk or negedge rst_n)
+	if (!rst_n)
+		dphase_active_i <= 1'b0;
+	else if (i_hready)
+		dphase_active_i <= core_aph_req_i;
 
-always @ (*) begin
-	if (bus_gnt_d) begin
-		ahblm_htrans = HTRANS_NSEQ;
-		ahblm_haddr  = core_haddr_d;
-		ahblm_hsize  = core_hsize_d;
-		ahblm_hwrite = core_hwrite_d;
-		ahblm_hprot  = HPROT_DATA;
-	end else if (bus_gnt_i) begin
-		ahblm_htrans = HTRANS_NSEQ;
-		ahblm_haddr  = core_haddr_i;
-		ahblm_hsize  = core_hsize_i;
-		ahblm_hwrite = 1'b0;
-		ahblm_hprot  = HPROT_INSTR;
-	end else begin
-		ahblm_htrans = HTRANS_IDLE;
-		ahblm_haddr  = {W_ADDR{1'b0}};
-		ahblm_hsize  = 3'h0;
-		ahblm_hwrite = 1'b0;
-		ahblm_hprot  = 4'h0;
-	end
-end
+assign core_aph_ready_i = i_hready && core_aph_req_i;
+assign core_dph_ready_i = i_hready && dphase_active_i;
+assign core_dph_err_i   = i_hready && dphase_active_i && i_hresp;
+
+assign core_rdata_i = i_hrdata;
+
+assign i_hwrite = 1'b0;
+assign i_hburst = 3'h0;
+assign i_hprot = 4'b0010;
+assign i_hmastlock = 1'b0;
+assign i_hwdata = {W_DATA{1'b0}};
 
 // ----------------------------------------------------------------------------
-// Response routing
+// Load/store port
 
-// Data buses directly connected
-assign core_rdata_d = ahblm_hrdata;
-assign core_rdata_i = ahblm_hrdata;
-assign ahblm_hwdata = core_wdata_d;
+assign d_haddr = core_haddr_d;
+assign d_htrans = core_aph_req_d ? HTRANS_NSEQ : HTRANS_IDLE;
+assign d_hwrite = core_hwrite_d;
+assign d_hsize = core_hsize_d;
 
-// Handhshake based on grant and bus stall
-assign core_aph_ready_i = ahblm_hready && bus_gnt_i;
-assign core_dph_ready_i = ahblm_hready && bus_active_dph_i;
-assign core_dph_err_i   = ahblm_hready && bus_active_dph_i && ahblm_hresp;
+reg dphase_active_d;
+always @ (posedge clk or negedge rst_n)
+	if (!rst_n)
+		dphase_active_d <= 1'b0;
+	else if (i_hready)
+		dphase_active_d <= core_aph_req_d;
 
-assign core_aph_ready_d = ahblm_hready && bus_gnt_d;
-assign core_dph_ready_d = ahblm_hready && bus_active_dph_d;
-assign core_dph_err_d   = ahblm_hready && bus_active_dph_d && ahblm_hresp;
+assign core_aph_ready_d = d_hready && core_aph_req_d;
+assign core_dph_ready_d = d_hready && dphase_active_d;
+assign core_dph_err_d   = d_hready && dphase_active_d && d_hresp;
+
+assign core_rdata_d = d_hrdata;
+assign d_hwdata = core_wdata_d;
+
+assign d_hburst = 3'h0;
+assign d_hprot = 4'b0010;
+assign d_hmastlock = 1'b0;
 
 endmodule

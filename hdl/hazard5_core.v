@@ -333,7 +333,10 @@ always @ (*) begin
 		MEMOP_SH:  bus_hsize_d = HSIZE_HWORD;
 		default:   bus_hsize_d = HSIZE_BYTE;
 	endcase
-	bus_aph_req_d = x_memop_vld && !(x_stall_raw || flush_d_x || x_trap_enter);
+	// m_jump_req implies flush_d_x is coming. Can't use flush_d_x because it's
+	// possible for a mispredicted load/store to go through whilst a late jump
+	// request is stalled, if there are two bus masters.
+	bus_aph_req_d = x_memop_vld && !(x_stall_raw || m_jump_req || x_trap_enter);
 end
 
 // ALU operand muxes and bypass
