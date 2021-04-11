@@ -73,7 +73,7 @@ module hazard5_csr #(
 	input  wire            trap_enter_rdy,
 	input  wire            trap_exit,
 	output wire            trap_is_exception, // diagnostic
-	output wire [XLEN-1:0] mepc_in,
+	input  wire [XLEN-1:0] mepc_in,
 	output wire [XLEN-1:0] mepc_out,
 
 	// Exceptions must *not* be a function of bus stall.
