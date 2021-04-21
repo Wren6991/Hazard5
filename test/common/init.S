@@ -94,6 +94,14 @@ j \name
 	la sp, __stack_top
 	la t0, .vector_table
 	csrw mtvec, t0
+
+	// newlib _start expects argc, argv on the stack. Leave stack 16-byte aligned.
+	addi sp, sp, -16
+	li a0, 1
+	sw a0, (sp)
+	la a0, progname
+	sw a0, 4(sp)
+
 	jal _start
 	j .halt
 
@@ -117,6 +125,9 @@ heap_ptr:
 .global .halt
 .halt:
 	j .halt
+
+progname:
+	.asciz "hazard5-testbench"
 
 // ----------------------------------------------------------------------------
 // Weak handler/ISR symbols
