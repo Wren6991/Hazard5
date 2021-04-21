@@ -12,7 +12,7 @@ def extract(bits, msb, lsb):
 	return (bits & (1 << msb + 1) - 1) >> lsb
 
 def sext(bits, sign_bit):
-	return bits - ((bits & 1 << sign_bit) << 1)
+	return (bits & (1 << sign_bit + 1) - 1) - ((bits & 1 << sign_bit) << 1)
 
 def concat_extract(bits, msb_lsb_pairs, signed=True):
 	accum = 0
@@ -24,14 +24,19 @@ def concat_extract(bits, msb_lsb_pairs, signed=True):
 		accum = sext(accum, accum_count - 1)
 	return accum
 
+# Note these handy functions are not used much in the main loop, because CPython is unable
+# to inline them. This and similar changes results in a ~3x performance increase. :(
 def imm_i(instr):
-	return concat_extract(instr, ((31, 20),))
+	# return concat_extract(instr, ((31, 20),))
+	return (instr >> 20) - (instr >> 19 & 0x1000)
 
 def imm_s(instr):
-	return concat_extract(instr, ((31, 25), (11, 7)))
+	# return concat_extract(instr, ((31, 25), (11, 7)))
+	return (instr >> 20 & 0xfe0) + (instr >> 7 & 0x1f) - (instr >> 19 & 0x1000)
 
 def imm_u(instr):
-	return concat_extract(instr, ((31, 12),)) << 12
+	# return concat_extract(instr, ((31, 12),)) << 12
+	return instr & 0xfffff000 - (instr << 1 & 0x100000000)
 
 def imm_b(instr):
 	return concat_extract(instr, ((31, 31), (7, 7), (30, 25), (11, 8))) << 1
@@ -43,25 +48,24 @@ def imm_j(instr):
 class FlatMemory:
 
 	def __init__(self, size):
-		self._size = size
-		self._mem = bytearray(size)
+		self.size = size
+		self.mem = [0] * (size >> 2)
 
 	# Reads are unsigned. Writes allow signed or unsigned values and convert
 	# implicitly to unsigned. Multi-byte accesses are little-endian.
 
 	def get8(self, addr):
-		# print("r", addr)
-		assert(addr >= 0 and addr < self._size)
-		return self._mem[addr]
+		assert(addr >= 0 and addr < self.size)
+		return self.mem[addr >> 2] >> (addr & 0x3) * 8 & 0xff
 
 	def put8(self, addr, data):
-		# print("w", addr)
-		assert(addr >= 0 and addr < self._size)
+		assert(addr >= 0 and addr < self.size)
 		assert(data >= -1 << 7 and data < 1 << 8)
-		self._mem[addr] = data & 0xff
+		self.mem[addr >> 2] &= ~(0xff << 8 * (addr & 0x3))
+		self.mem[addr >> 2] |= (data & 0xff) << 8 * (addr % 4)
 
 	def get16(self, addr):
-		return sum(self.get8(addr + i) << 8 * i for i in range(2))
+		return self.mem[addr >> 2] >> (addr & 0x2) * 8 & 0xffff
 
 	def put16(self, addr, data):
 		assert(data >= -1 << 15 and data < 1 << 16)
@@ -69,20 +73,22 @@ class FlatMemory:
 			self.put8(addr + i, data >> 8 * i & 0xff)
 
 	def get32(self, addr):
-		return sum(self.get8(addr + i) << 8 * i for i in range(4))
+		assert(addr >= 0 and addr + 3 < self.size)
+		return self.mem[addr >> 2]
 
 	def put32(self, addr, data):
 		assert(data >= -1 << 31 and data < 1 << 32)
-		for i in range(4):
-			self.put8(addr + i, data >> 8 * i & 0xff)
+		assert(addr >= 0 and addr + 3 < self.size)
+		self.mem[addr >> 2] = data & 0xffff_ffff
 
 	def loadbin(self, data, offs):
 		if type(data) not in (bytes, bytearray):
 			# must be fh
 			assert(data.mode == "rb")
 			data = data.read()
-		assert(offs + len(data) < self._size)
-		self._mem[offs : offs + len(data)] = data
+		assert(offs + len(data) < self.size)
+		for i, b in enumerate(data):
+			self.put8(offs + i, b)
 
 class TBExit(Exception):
 	pass
@@ -155,14 +161,12 @@ class RVCore:
 		self.pc = reset_vector
 		self.csr = RVCSR()
 
-	def step(self, log=True):
-		self.exec(self.mem.get32(self.pc), log=log)
-		self.csr.step()
-
-	def exec(self, instr, log=True):
-		regnum_rs1 = extract(instr, 19, 15)
-		regnum_rs2 = extract(instr, 24, 20)
-		regnum_rd  = extract(instr, 11, 7)
+	def step(self, instr=None, log=True):
+		if instr is None:
+			instr = self.mem.mem[self.pc >> 2]
+		regnum_rs1 = instr >> 15 & 0x1f
+		regnum_rs2 = instr >> 20 & 0x1f
+		regnum_rd  = instr >> 7 & 0x1f
 		rs1 = self.regs[regnum_rs1]
 		rs2 = self.regs[regnum_rs2]
 
@@ -171,9 +175,9 @@ class RVCore:
 		log_disasm = None
 		instr_invalid = False
 
-		opc = extract(instr, 6, 2)
-		funct3 = extract(instr, 14, 12)
-		funct7 = extract(instr, 31, 25)
+		opc = instr >> 2 & 0x1f
+		funct3 = instr >> 12 & 0x7
+		funct7 = instr >> 25 & 0x7f
 		OPC_LOAD     = 0b00_000
 		OPC_MISC_MEM = 0b00_011
 		OPC_OP_IMM   = 0b00_100
@@ -224,11 +228,36 @@ class RVCore:
 					rd_wdata = rs1 >> (rs2 & 0x1f)
 				else:
 					instr_invalid = True
+			elif funct7 == 0b00_00001:
+				if funct3 < 0b100:
+					if log:
+						mul_instr_name = {0b000: "mul", 0b001: "mulh", 0b010: "mulhsu", 0b011: "mulhu"}[funct3]
+						log_disasm = f"{mul_instr_name} x{regnum_rd}, x{regnum_rs1}, x{regnum_rs2}"
+					mul_op_a = rs1 & XLEN_MASK if funct3 == 0b011 else rs1
+					mul_op_b = rs2 & XLEN_MASK if funct3 in (0b010, 0b011) else rs2
+					mul_result = mul_op_a * mul_op_b
+					if funct3 != 0b000:
+						mul_result >>= 32
+					rd_wdata = sext(mul_result, XLEN - 1)
+				else:
+					if log:
+						div_instr_name = {0b100: "div", 0b101: "divu", 0b110: "rem", 0b111: "remu"}[funct3]
+						log_disasm = f"{div_instr_name} x{regnum_rd}, x{regnum_rs1}, x{regnum_rs2}"
+					if funct3 == 0b100:
+						rd_wdata = -1 if rs2 == 0 else int(rs1 / rs2)
+					elif funct3 == 0b101:
+						rd_wdata = -1 if rs2 == 0 else sext((rs1 & XLEN_MASK) // (rs2 & XLEN_MASK), XLEN - 1)
+					elif funct3 == 0b110:
+						rd_wdata = rs1 if rs2 == 0 else rs1 - int(rs1 / rs2) * rs2
+					elif funct3 == 0b111:
+						rd_wdata = rs1 if rs2 == 0 else sext((rs1 & XLEN_MASK) % (rs2 & XLEN_MASK), XLEN - 1)
+					else:
+						instr_invalid = True
 			else:
 				instr_invalid = True
 
 		elif opc == OPC_OP_IMM:
-			imm = imm_i(instr)
+			imm = (instr >> 20) - (instr >> 19 & 0x1000) # imm_i(instr)
 			if funct3 == 0b000:
 				if log: log_disasm = f"addi x{regnum_rd}, x{regnum_rs1}, {imm}"
 				rd_wdata = rs1 + imm
@@ -248,16 +277,16 @@ class RVCore:
 				if log: log_disasm = f"andi x{regnum_rd}, x{regnum_rs1}, 0x{imm & XLEN_MASK:x}"
 				rd_wdata = rs1 & imm
 			elif funct3 == 0b001 or funct3 == 0b101:
-				shamt = extract(instr, 24, 20)
+				# shamt is regnum_rs2
 				if funct7 == 0b00_00000 and funct3 == 0b001:
-					if log: log_disasm = f"slli x{regnum_rd}, x{regnum_rs1}, {shamt}"
-					rd_wdata = rs1 << shamt
+					if log: log_disasm = f"slli x{regnum_rd}, x{regnum_rs1}, {regnum_rs2}"
+					rd_wdata = rs1 << regnum_rs2
 				elif funct7 == 0b00_00000 and funct3 == 0b101:
-					if log: log_disasm = f"srli x{regnum_rd}, x{regnum_rs1}, {shamt}"
-					rd_wdata = (rs1 & XLEN_MASK) >> shamt
+					if log: log_disasm = f"srli x{regnum_rd}, x{regnum_rs1}, {regnum_rs2}"
+					rd_wdata = (rs1 & XLEN_MASK) >> regnum_rs2
 				elif funct7 == 0b01_00000 and funct3 == 0b101:
-					if log: log_disasm = f"srai x{regnum_rd}, x{regnum_rs1}, {shamt}"
-					rd_wdata = rs1 >> shamt
+					if log: log_disasm = f"srai x{regnum_rd}, x{regnum_rs1}, {regnum_rs2}"
+					rd_wdata = rs1 >> regnum_rs2
 				else:
 					instr_invalid = True
 			else:
@@ -265,7 +294,8 @@ class RVCore:
 
 		elif opc == OPC_JAL:
 			rd_wdata = self.pc + 4
-			pc_wdata = self.pc + imm_j(instr)
+			# pc_wdata = self.pc + imm_j(instr)
+			pc_wdata = self.pc + (instr >> 20 & 0x7fe) + (instr >> 9 & 0x800) + (instr & 0xff000) - (instr >> 11 & 0x100000)
 			if log: log_disasm = f"jal x{regnum_rd}, {pc_wdata & XLEN_MASK:08x}"
 
 		elif opc == OPC_JALR:
@@ -276,7 +306,8 @@ class RVCore:
 			pc_wdata = (rs1 + imm) & -2
 
 		elif opc == OPC_BRANCH:
-			target = self.pc + imm_b(instr)
+			# target = self.pc + imm_b(instr)
+			target = self.pc + (instr >> 7 & 0x1e) + (instr >> 20 & 0x7e0) + (instr << 4 & 0x800) - (instr >> 19 & 0x1000)
 			taken = False
 			if log: log_branch_str = f" x{regnum_rs1}, x{regnum_rs2}, {target:08x}"
 			if funct3 == 0b000:
@@ -308,13 +339,16 @@ class RVCore:
 			load_addr = imm + rs1 & XLEN_MASK
 			if funct3 == 0b000:
 				if log: log_disasm = "lb" + log_load_str
-				rd_wdata = sext(self.mem.get8(load_addr), 7)
+				rd_wdata = self.mem.get8(load_addr)
+				rd_wdata -= rd_wdata << 1 & 0x100
 			elif funct3 == 0b001:
 				if log: log_disasm = "lh" + log_load_str
-				rd_wdata = sext(self.mem.get16(load_addr), 15)
+				rd_wdata = self.mem.get16(load_addr)
+				rd_wdata -= rd_wdata << 1 & 0x10000
 			elif funct3 == 0b010:
 				if log: log_disasm = "lw" + log_load_str
-				rd_wdata = sext(self.mem.get32(load_addr), 31)
+				rd_wdata = self.mem.get32(load_addr)
+				rd_wdata -= rd_wdata << 1 & 0x100000000
 			elif funct3 == 0b100:
 				if log: log_disasm = "lbu" + log_load_str
 				rd_wdata = self.mem.get8(load_addr)
@@ -406,7 +440,7 @@ class RVCore:
 			print(log_str)
 
 		if rd_wdata is not None and regnum_rd != 0:
-			self.regs[regnum_rd] = sext(rd_wdata & XLEN_MASK, XLEN - 1)
+			self.regs[regnum_rd] = (rd_wdata & 0xffffffff) - (rd_wdata << 1 & 0x100000000)
 
 		if pc_wdata is None:
 			self.pc = self.pc + 4
@@ -416,17 +450,21 @@ class RVCore:
 		if instr_invalid:
 			print(f"Invalid instruction at {self.pc:08x}: {instr:08x}")
 
+		self.csr.step()
+
+
+
 def anyint(x):
 	return int(x, 0)
 
-if __name__ == "__main__":
+def main(argv):
 	parser = argparse.ArgumentParser()
 	parser.add_argument("binfile")
 	parser.add_argument("--memsize", default = 1 << 24, type = anyint)
 	parser.add_argument("--cycles", default = int(1e4), type = anyint)
 	parser.add_argument("--dump", nargs=2, action="append", type=anyint)
 	parser.add_argument("--quiet", "-q", action="store_true")
-	args = parser.parse_args()
+	args = parser.parse_args(argv)
 	if args.quiet:
 		mem = MemWithTBIO(args.memsize, io_log_fmt="{}")
 	else:
@@ -440,6 +478,7 @@ if __name__ == "__main__":
 		print(f"Processor halted simulation with exit code {e}")
 	except BrokenPipeError as e:
 		sys.exit(0)
+	print(f"Ran for {i + 1} cycles")
 
 	for start, end in args.dump or []:
 		print(f"Dumping memory from {start:08x} to {end:08x}:")
@@ -448,3 +487,5 @@ if __name__ == "__main__":
 			sys.stdout.write(f"{mem.get8(addr):02x}{sep}")
 		print("")
 
+if __name__ == "__main__":
+	main(sys.argv[1:])
