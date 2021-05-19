@@ -1,0 +1,87 @@
+# Hazard5
+
+Hazard5 is a 32-bit RISC-V processor. It accesses memory and memory-mapped hardware through either a single AMBA 3 AHB-Lite port, or a pair of such ports. The dual-port configuration uses one port for instruction fetch, and the other for loads and stores. This offers higher performance than the single-port configuration, but potentially requires more complex bus fabric.
+
+The exact RISC-V ISA profile supported is configurable. The processor always supports the full RV32I base instruction set, plus the Zifencei instruction fence extension. The following can also be enabled:
+
+- The C extension (compressed instruction set: mixed 16/32-bit instructions)
+- The M extension (integer multiply, divide and remainder)
+- The Zcsr extension (access to internal control and status registers)
+
+There are a number of other configuration parameters for area vs functionality/performance tradeoffs:
+
+- Presence of a fast 32x32 -> 32 multiplier for the `MUL` instruction
+- Unrolling of the sequential multiply/divide/remainder circuit to produce multiple result bits per clock cycle
+- Option for a reduced bypass network (X -> X only) for minimal area
+- Configure which CSRs are present. Only a subset of M-mode CSRs are supported.
+
+## Microarchitecture
+
+Hazard5 implements a 5-stage classic scalar RISC pipeline. The stages are:
+
+- `F` fetch
+- `D` decode
+- `X` execute
+- `M` memory access (load/store)
+- `W` register writeback, fetch address generation
+
+The presence of the `W` stage is slightly debatable -- it really depends how you draw the diagram -- but at this point I have been calling the processor Hazard5 for so long that it would be embarrassing to admit it has 4 stages. So, 5-stage it is.
+
+The backend (`D`, `X`, `M`) will be strikingly familiar if you have flicked through a computer architecture textbook or some slides. The instruction frontend has some additional complexity to handle mixed-sized instructions efficiently, and to handle downstream stalls gracefully without creating timing through-paths on the bus interface.
+
+### Frontend
+
+The frontend keeps the backend fed with correctly-aligned instructions. It is implemented in stages `W` (bus address phase for instruction fetch) and `D` (bus data phase for instruction fetch). The frontend is ignorant of branches (there is no branch target prediction in Hazard5): in general, it fetches continuously along the nontaken path until it is informed of a branch or jump by a later stage.
+
+The frontend is designed with the following constraints in mind:
+
+- No combinatorial path from AHB-Lite data phase to address phase (e.g. {\tt hready} $\to$ {\tt htrans})
+- AHB-Lite compliant: no unaligned transfers, no deassertion or change of active requests
+- Provide up to 32 bits of instruction data per clock in steady state, even if instructions are unaligned
+- 0-cycle jump/flush to AHB address phase assertion (with minimal logic on this path)
+- No performance penalty for unaligned jump to 16-bit instruction
+- Attempt to maintain performance when competing with the load/store unit and AHB-Lite busmaster peers
+
+The main source of complexity here is that a RV32IC instruction stream is not naturally aligned, i.e. instruction address modulo instruction size is not always zero. On the other hand, AHB-Lite does require natural alignment of all accessess. The frontend must be able to supply a continuous stream of unaligned 32-bit instructions to the backend whilst performing aligned 32-bit bus accesesses.
+
+In general the frontend performs only 32-bit accesses, so that the minimum number of bus cycles are occupied during sequential execution. The only exception is a jump to a non-word-aligned address: in this case the first fetch on the new path is a 16-bit fetch.
+
+**insert diagram here**
+
+
+
+#### Prefetch Queue
+
+The AHB-Lite bus port used for instruction fetch may have two bus accesses in flight at a given point (one in data phase, one in address phase). This means that, by the time we decode an instruction and discover that it may cause a stall (or that it is in fact a pair of 16-bit instructions and we are overfetching), the core may have two instruction fetches in flight which can't be cancelled. The frontend must be able to buffer at least this much instruction data to avoid dropping those in-flight fetches when this happens, and this buffering is one of the tasks handled by Hazard5's prefetch queue.
+
+There are three parts to the queue:
+
+
+- A 32-bit FIFO. The depth is configurable, but should be at least 2 words for full throughput
+- A halfword buffer which may store the higher-addressed half of a recently-popped FIFO word
+- The upper half of the current instruction register (`CIR`), if the previous instruction was 16-bit
+
+These three sources should service the majority of instruction fetches, and fresh bus data is written only to the FIFO. However, following jumps, flushes, or fetch starvation (either due to load/store activity or bus wait states), bus data can be forwarded directly to `CIR`.
+
+#### Program Counter
+
+Hazard5 does *not* use the program counter (`PC`) for code fetch, during sequential execution. `PC` is used exclusively for the link value in `JAL(R)`, mispredict recovery, and PC-relative addressing; the program counter is physically located in `D`.
+
+The frontend fetches instruction data from consecutive word-aligned addresses, paced by backpressure from the instruction FIFO. The *fetch counter* runs ahead of `PC` during sequential execution, and unlike `PC`, always points to a word-aligned address. However, when taking a jump or branch, the full (halfword-aligned) address to be written to `PC` is required, as the first fetch of a halfword-aligned jump must be halfword-sized, which requires special attention.
+
+#### Arbitration of Fetch and Load/Store
+
+When Hazard5 is instantiated with a single bus port, this port handles bus requests from two sources: the frontend, whose address phase is in `W`, and the load/store unit, whose address phase is in `X`. Frontend requests may be linear (common case) or non-linear (e.g jumps). The rules are:
+
+1. If a jump or mispredict recovery is asserted by {\tt M}, this wins.
+	- Any requests from earlier stages are logically later in program order.
+	- If {\tt M} wants to jump then these instructions are being executed in error, so should certainly not be permitted to access the bus.
+2. Else if a load/store is asserted by {\tt X}, this wins.
+	- Stalling instruction fetch {\it may} be covered by the prefetch queue, in which case we've lost nothing
+	- Stalling a load/store will always increase execution time
+	- If instead {\tt X} stalled, and instruction fetch ran ahead, what would we do with the fetched instructions?
+3. Otherwise, perform any other access requested by the frontend.
+	- Always Be Fetching
+
+When Hazard5 is instantiated with two ports, there is no internal contention between instruction fetch and load/store accesses. However, there may be contention in the external bus fabric, and in this case it is recommended to give higher priority to the load/store port if possible.
+
