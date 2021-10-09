@@ -24,7 +24,7 @@ LD		= riscv32-unknown-elf-gcc
 AS		= riscv32-unknown-elf-gcc
 # Flag : CFLAGS
 #	Use this flag to define compiler options. Note, you can add compiler options from the command line using XCFLAGS="other flags"
-PORT_CFLAGS = -O3 -g
+PORT_CFLAGS = -O3 -g -fno-common -funroll-loops -finline-functions --param max-inline-insns-auto=20 -falign-functions=4 -falign-jumps=4 -falign-loops=4
 FLAGS_STR = "$(PORT_CFLAGS) $(XCFLAGS) $(XLFLAGS) $(LFLAGS_END)"
 CFLAGS = $(PORT_CFLAGS) -I$(PORT_DIR) -I. -DFLAGS_STR=\"$(FLAGS_STR)\" 
 #Flag : LFLAGS_END
@@ -34,7 +34,7 @@ SEPARATE_COMPILE=1
 # Flag : SEPARATE_COMPILE
 # You must also define below how to create an object file, and how to link.
 OBJOUT 	= -o
-LFLAGS 	= -T ../../common/memmap.ld
+LFLAGS 	= -T ../../common/memmap.ld -flto
 ASFLAGS = -c
 OFLAG 	= -o
 COUT 	= -c
