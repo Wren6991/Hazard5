@@ -71,19 +71,19 @@ parameter W_FIFO_LEVEL = $clog2(FIFO_DEPTH + 1);
 
 wire jump_now = jump_target_vld && jump_target_rdy;
 
-reg [W_DATA-1:0]     fifo_mem [0:FIFO_DEPTH];
-reg [FIFO_DEPTH-1:0] fifo_valid;
+reg [W_DATA-1:0]   fifo_mem [0:FIFO_DEPTH];
+reg [FIFO_DEPTH:0] fifo_valid;
 
 wire fifo_push;
 wire fifo_pop;
 
 always @ (posedge clk or negedge rst_n) begin
 	if (!rst_n) begin
-		fifo_valid <= {FIFO_DEPTH{1'b0}};
+		fifo_valid <= {FIFO_DEPTH+1{1'b0}};
 	end else if (jump_now) begin
-		fifo_valid <= {FIFO_DEPTH{1'b0}};
+		fifo_valid <= {FIFO_DEPTH+1{1'b0}};
 	end else if (fifo_push || fifo_pop) begin
-		fifo_valid <= ~(~fifo_valid << fifo_push) >> fifo_pop;
+		fifo_valid <= {1'b0, ~(~fifo_valid << fifo_push) >> fifo_pop};
 	end
 end
 
