@@ -691,7 +691,6 @@ end
 //synthesis translate_on
 
 hazard5_regfile_1w2r #(
-	.FAKE_DUALPORT(0),
 `ifdef SIM
 	.RESET_REGS(1),
 `elsif FORMAL

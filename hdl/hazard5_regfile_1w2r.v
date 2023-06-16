@@ -24,8 +24,7 @@
 // (Looking at you iCE40)
 
 module hazard5_regfile_1w2r #(
-	parameter FAKE_DUALPORT = 0,
-	parameter RESET_REGS = 0,	// Unsupported for FAKE_DUALPORT
+	parameter RESET_REGS = 0,
 	parameter N_REGS = 16,
 	parameter W_DATA = 32,
 	parameter W_ADDR = $clog2(W_DATA)	// should be localparam. ISIM...
@@ -45,31 +44,16 @@ module hazard5_regfile_1w2r #(
 );
 
 generate
-if (FAKE_DUALPORT) begin: fake_dualport
-	reg [W_DATA-1:0] mem1 [0:N_REGS-1];
-	reg [W_DATA-1:0] mem2 [0:N_REGS-1];
-
-	always @ (posedge clk) begin
-		if (wen) begin
-			mem1[waddr] <= wdata;
-			mem2[waddr] <= wdata;
-		end
-		rdata1 <= mem1[raddr1];
-		rdata2 <= mem2[raddr2];
-	end
-end else if (RESET_REGS) begin: real_dualport_reset
+if (RESET_REGS) begin: real_dualport_reset
 	// This will presumably always be implemented with flops
 	reg [W_DATA-1:0] mem [0:N_REGS-1];
 
 	integer i;
 	always @ (posedge clk or negedge rst_n) begin
 		if (!rst_n) begin
-			// It's best to ask nicely:
-			// synthesis please_on
 			for (i = 0; i < N_REGS; i = i + 1) begin
 				mem[i] <= {W_DATA{1'b0}};
 			end
-			// synthesis please_off
 		end else begin
 			if (wen) begin
 				mem[waddr] <= wdata;
@@ -80,7 +64,12 @@ end else if (RESET_REGS) begin: real_dualport_reset
 	end
 end else begin: real_dualport_noreset
 	// This should be inference-compatible on FPGAs with dual-port BRAMs
-	reg [W_DATA-1:0] mem [0:N_REGS-1];
+	`ifdef YOSYS
+	`ifdef FPGA_ICE40
+	// We do not require write-to-read bypass logic on the BRAM
+	(* no_rw_check *)
+	`endif
+	`endif	reg [W_DATA-1:0] mem [0:N_REGS-1];
  
 	always @ (posedge clk) begin
 		if (wen) begin
