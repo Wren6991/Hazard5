@@ -6,6 +6,8 @@ ifndef APP
 $(error Must define application name as APP)
 endif
 
+MARCH        ?= rv32ia_zicsr
+
 CCFLAGS      ?=
 LDSCRIPT     ?= ../common/memmap.ld
 CROSS_PREFIX ?= riscv32-unknown-elf-
@@ -45,4 +47,4 @@ $(APP).bin: $(APP).elf
 	$(CROSS_PREFIX)objdump -d $(APP).elf >> $(APP).dis
 
 $(APP).elf: $(SRCS) $(wildcard %.h)
-	$(CROSS_PREFIX)gcc $(CCFLAGS) $(SRCS) -T $(LDSCRIPT) $(addprefix -I,$(INCDIR)) -o $(APP).elf
+	$(CROSS_PREFIX)gcc -march=$(MARCH) $(CCFLAGS) $(SRCS) -T $(LDSCRIPT) $(addprefix -I,$(INCDIR)) -o $(APP).elf

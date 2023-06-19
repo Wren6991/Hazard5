@@ -23,7 +23,7 @@ SYNTH_CMD += chparam -set MUL_FAST $(MUL_FAST) $(TOP);
 SYNTH_CMD += prep -flatten -top $(TOP); async2sync;
 SYNTH_CMD += write_cxxrtl dut.cpp
 
-dut.cpp:
+dut.cpp: $(shell listfiles ../../hdl/hazard5.f)
 	yosys -p "$(SYNTH_CMD)" 2>&1 > cxxrtl.log
 
 clean::
