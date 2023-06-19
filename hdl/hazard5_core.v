@@ -351,21 +351,13 @@ end
 
 // ALU operand muxes and bypass
 always @ (*) begin
-	if (~|dx_rs1) begin
-		x_rs1_bypass = {W_DATA{1'b0}};
-	end else if (xm_rd == dx_rs1) begin
+	if (|dx_rs1 && dx_rs1 == xm_rd) begin
 		x_rs1_bypass = xm_result;
-	end else if (mw_rd == dx_rs1 && !REDUCED_BYPASS) begin
-		x_rs1_bypass = mw_result;
 	end else begin
 		x_rs1_bypass = dx_rdata1;
 	end
-	if (~|dx_rs2) begin
-		x_rs2_bypass = {W_DATA{1'b0}};
-	end else if (xm_rd == dx_rs2) begin
+	if (|dx_rs2 && dx_rs2 == xm_rd) begin
 		x_rs2_bypass = xm_result;
-	end else if (mw_rd == dx_rs2 && !REDUCED_BYPASS) begin
-		x_rs2_bypass = mw_result;
 	end else begin
 		x_rs2_bypass = dx_rdata2;
 	end
@@ -710,16 +702,15 @@ hazard5_regfile_1w2r #(
 ) inst_regfile_1w2r (
 	.clk    (clk),
 	.rst_n  (rst_n),
-	// On stall, we feed X's addresses back into regfile
-	// so that output does not change.
-	.raddr1 (x_stall ? dx_rs1 : d_rs1),
+	.ren    (!x_stall),
+	.raddr1 (d_rs1),
 	.rdata1 (dx_rdata1),
-	.raddr2 (x_stall ? dx_rs2 : d_rs2),
+	.raddr2 (d_rs2),
 	.rdata2 (dx_rdata2),
 
 	.waddr  (xm_rd),
 	.wdata  (m_result),
-	.wen    (w_reg_wen)
+	.wen    (|w_reg_wen)
 );
 
 `ifdef RISCV_FORMAL
