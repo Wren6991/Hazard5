@@ -57,6 +57,10 @@ parameter MUL_FAST        = 0,
 // two, so careful with the low-order bits.
 parameter MTVEC_WMASK     = 32'hfffff000,
 
+// Don't attempt to suppress unaligned load/stores, and don't take an
+// exception. Instead do something undefined. This slightly improves timing.
+parameter NO_LS_ALIGN_CHECK = 0,
+
 // ----------------------------------------------------------------------------
 // Port size parameters (do not modify)
 

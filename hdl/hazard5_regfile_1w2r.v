@@ -69,7 +69,8 @@ end else begin: real_dualport_noreset
 	// We do not require write-to-read bypass logic on the BRAM
 	(* no_rw_check *)
 	`endif
-	`endif	reg [W_DATA-1:0] mem [0:N_REGS-1];
+	`endif
+	reg [W_DATA-1:0] mem [0:N_REGS-1];
  
 	always @ (posedge clk) begin
 		if (wen) begin

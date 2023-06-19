@@ -317,9 +317,10 @@ end
 
 wire x_memop_vld = !dx_memop[3];
 wire x_memop_write = dx_memop == MEMOP_SW || dx_memop == MEMOP_SH || dx_memop == MEMOP_SB;
-wire x_unaligned_addr =
+wire x_unaligned_addr = !NO_LS_ALIGN_CHECK && (
 	bus_hsize_d == HSIZE_WORD && |bus_haddr_d[1:0] ||
-	bus_hsize_d == HSIZE_HWORD && bus_haddr_d[0];
+	bus_hsize_d == HSIZE_HWORD && bus_haddr_d[0]
+);
 
 wire x_except_load_misaligned = x_memop_vld && x_unaligned_addr && !x_memop_write;
 wire x_except_store_misaligned = x_memop_vld && x_unaligned_addr && x_memop_write;
