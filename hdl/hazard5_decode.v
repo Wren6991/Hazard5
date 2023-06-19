@@ -44,6 +44,9 @@ module hazard5_decode #(
 
 	output reg  [W_REGADDR-1:0] d_rs1, // combinatorial
 	output reg  [W_REGADDR-1:0] d_rs2, // combinatorial
+	// The "early" decode is "what register, if any"
+	output wire [W_REGADDR-1:0] d_rs1_early,
+	output wire [W_REGADDR-1:0] d_rs2_early,
 
 	output reg  [W_DATA-1:0]    dx_imm,
 	output reg  [W_REGADDR-1:0] dx_rs1,
@@ -207,6 +210,9 @@ reg                  d_csr_w_imm;
 reg  [W_EXCEPT-1:0]  d_except;
 
 localparam X0 = {W_REGADDR{1'b0}};
+
+assign d_rs1_early = d_instr[19:15];
+assign d_rs2_early = d_instr[24:20];
 
 always @ (*) begin
 	// Assign some defaults
