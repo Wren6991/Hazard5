@@ -126,9 +126,11 @@ int main(int argc, char **argv) {
 	for (int64_t cycle = 0; cycle < max_cycles; ++cycle) {
 		top.p_clk.set<bool>(false);
 		top.step();
+		top.step();
 		if (dump_waves)
 			vcd.sample(cycle * 2);
 		top.p_clk.set<bool>(true);
+		top.step();
 		top.step();
 		// Handle current data phase, then move current address phase to data phase
 		uint32_t rdata = 0;
