@@ -29,6 +29,8 @@ module hazard5_decode #(
 
 	input wire  [31:0]          fd_cir,
 	input wire  [1:0]           fd_cir_vld,
+	input wire                  fd_cir_size,
+	input wire                  fd_cir_illegal16,
 	output wire [1:0]           df_cir_use,
 	output wire                 df_cir_lock,
 	output reg                  d_jump_req,
@@ -135,7 +137,6 @@ wire d_invalid;
 wire jump_enable = !d_starved && !cir_lock_prev && !d_invalid;
 reg [W_ADDR-1:0] d_jump_offs;
 
-
 always @ (*) begin
 	// JAL is major opcode 1101111,
 	// branches are        1100011.
@@ -158,24 +159,11 @@ always @ (*) begin
 	endcase
 end
 
-// ============================================================================
-// Expand compressed instructions
-// ============================================================================
-
-wire [31:0] d_instr;
-wire        d_instr_is_32bit;
-wire        d_invalid_16bit;
+wire [31:0] d_instr = fd_cir;
+wire        d_instr_is_32bit = fd_cir_size;
+wire        d_invalid_16bit = fd_cir_illegal16;
 reg         d_invalid_32bit;
 assign      d_invalid = d_invalid_16bit || d_invalid_32bit;
-
-hazard5_instr_decompress #(
-	.PASSTHROUGH(!EXTENSION_C)
-) decomp (
-	.instr_in       (fd_cir),
-	.instr_is_32bit (d_instr_is_32bit),
-	.instr_out      (d_instr),
-	.invalid        (d_invalid_16bit)
-);
 
 // ============================================================================
 // Decode X controls

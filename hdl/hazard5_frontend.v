@@ -1,3 +1,5 @@
+`default_nettype none
+
 module hazard5_frontend #(
 	parameter EXTENSION_C = 1,
 	parameter W_ADDR = 32,     // other sizes currently unsupported
@@ -36,6 +38,8 @@ module hazard5_frontend #(
 	//    which we fetched previously
 	// This works OK because size is decoded from 2 LSBs of instruction, so cheap.
 	output reg  [31:0]       cir,
+	output reg               cir_size,
+	output reg               cir_illegal16,
 	output reg  [1:0]        cir_vld, // number of valid halfwords in CIR
 	input wire  [1:0]        cir_use, // number of halfwords D intends to consume
 	                                  // *may* be a function of hready
@@ -239,6 +243,7 @@ assign jump_target_rdy = !mem_addr_hold;
 reg [1:0] buf_level;
 reg [W_BUNDLE-1:0] hwbuf;
 reg hwbuf_vld;
+reg [31:0] cir_raw;
 
 wire [W_DATA-1:0] fetch_data = fifo_empty ? mem_data : fifo_rdata;
 wire fetch_data_vld = !fifo_empty || (mem_data_vld && ~|ctr_flush_pending);
@@ -247,9 +252,9 @@ wire fetch_data_vld = !fifo_empty || (mem_data_vld && ~|ctr_flush_pending);
 // We don't care about anything which is invalid or will be overlaid with fresh data,
 // so choose these values in a way that minimises muxes
 wire [3*W_BUNDLE-1:0] instr_data_shifted =
-	cir_use[1]                ? {hwbuf, cir[W_BUNDLE +: W_BUNDLE], hwbuf} :
-	cir_use[0] && EXTENSION_C ? {hwbuf, hwbuf, cir[W_BUNDLE +: W_BUNDLE]} :
-	                            {hwbuf, cir};
+	cir_use[1]                ? {hwbuf, cir_raw[W_BUNDLE +: W_BUNDLE], hwbuf} :
+	cir_use[0] && EXTENSION_C ? {hwbuf, hwbuf, cir_raw[W_BUNDLE +: W_BUNDLE]} :
+	                            {hwbuf, cir_raw};
 
 // Saturating subtraction: on cir_lock dassertion,
 // buf_level will be 0 but cir_use will be positive!
@@ -293,8 +298,40 @@ always @ (posedge clk or negedge rst_n) begin
 	end
 end
 
+// Decompress instruction into CIR, pass width and invalidity alongside it
+// (we only decode validity of 16-bit instructions here)
+
+wire [31:0] cir_next;
+wire decomp_instr_size;
+wire decomp_instr_invalid;
+hazard5_instr_decompress #(
+	.PASSTHROUGH(!EXTENSION_C)
+) decomp (
+	.instr_in       (instr_data_plus_fetch[31:0]),
+	.instr_is_32bit (decomp_instr_size),
+	.instr_out      (cir_next),
+	.invalid        (decomp_instr_invalid)
+);
+
 // No need to reset these as they will be written before first use
-always @ (posedge clk)
-	{hwbuf, cir} <= instr_data_plus_fetch;
+always @ (posedge clk or negedge rst_n) begin
+	if (!rst_n) begin
+		hwbuf <= 16'd0;
+		cir <= 32'd0;
+		cir_raw <= 32'd0;
+		cir_size <= 1'b0;
+		cir_illegal16 <= 1'b0;
+	end else begin
+		hwbuf <= instr_data_plus_fetch[47:32];
+		cir_raw <= instr_data_plus_fetch[31:0];
+		cir <= cir_next;
+		cir_size <= decomp_instr_size;
+		cir_illegal16 <= decomp_instr_invalid;
+	end
+end
 
 endmodule
+
+`ifndef YOSYS
+`default_nettype wire
+`endif
