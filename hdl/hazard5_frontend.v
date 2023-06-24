@@ -298,37 +298,57 @@ always @ (posedge clk or negedge rst_n) begin
 	end
 end
 
-// Decompress instruction into CIR, pass width and invalidity alongside it
-// (we only decode validity of 16-bit instructions here)
-
-wire [31:0] cir_next;
-wire decomp_instr_size;
-wire decomp_instr_invalid;
-hazard5_instr_decompress #(
-	.PASSTHROUGH(!EXTENSION_C)
-) decomp (
-	.instr_in       (instr_data_plus_fetch[31:0]),
-	.instr_is_32bit (decomp_instr_size),
-	.instr_out      (cir_next),
-	.invalid        (decomp_instr_invalid)
-);
-
-// No need to reset these as they will be written before first use
 always @ (posedge clk or negedge rst_n) begin
 	if (!rst_n) begin
 		hwbuf <= 16'd0;
-		cir <= 32'd0;
 		cir_raw <= 32'd0;
-		cir_size <= 1'b0;
-		cir_illegal16 <= 1'b0;
 	end else begin
 		hwbuf <= instr_data_plus_fetch[47:32];
 		cir_raw <= instr_data_plus_fetch[31:0];
-		cir <= cir_next;
-		cir_size <= decomp_instr_size;
-		cir_illegal16 <= decomp_instr_invalid;
 	end
 end
+
+// Decompress instruction into CIR, pass width and invalidity alongside it
+// (we only decode validity of 16-bit instructions here)
+
+generate
+if (EXTENSION_C) begin: decompress
+
+	wire [31:0] cir_next;
+	wire decomp_instr_size;
+	wire decomp_instr_invalid;
+
+	hazard5_instr_decompress #(
+		.PASSTHROUGH(!EXTENSION_C)
+	) decomp (
+		.instr_in       (instr_data_plus_fetch[31:0]),
+		.instr_is_32bit (decomp_instr_size),
+		.instr_out      (cir_next),
+		.invalid        (decomp_instr_invalid)
+	);
+
+	always @ (posedge clk or negedge rst_n) begin
+		if (!rst_n) begin
+			cir <= 32'd0;
+			cir_size <= 1'b0;
+			cir_illegal16 <= 1'b0;
+		end else begin
+			cir <= cir_next;
+			cir_size <= decomp_instr_size;
+			cir_illegal16 <= decomp_instr_invalid;
+		end
+	end
+
+end else begin: no_decompress
+
+	always @ (*) begin
+		cir = cir_raw;
+		cir_size = 1'b1;
+		cir_illegal16 = 1'b0;
+	end
+
+end
+endgenerate
 
 endmodule
 
