@@ -126,16 +126,18 @@ end
 // ----------------------------------------------------------------------------
 // Main state machine
 
-reg sign_preadj_done;
+reg             sign_preadj_done;
 reg [W_CTR-1:0] ctr;
-reg sign_postadj_done;
-reg sign_postadj_carry;
+reg             ctr_nz;
+reg             sign_postadj_done;
+reg             sign_postadj_carry;
 
 localparam CTR_TOP = XLEN[W_CTR-1:0];
 
 always @ (posedge clk or negedge rst_n) begin
 	if (!rst_n) begin
 		ctr <= {W_CTR{1'b0}};
+		ctr_nz <= 1'b0;
 		sign_preadj_done <= 1'b1;
 		sign_postadj_done <= 1'b1;
 		sign_postadj_carry <= 1'b0;
@@ -147,6 +149,7 @@ always @ (posedge clk or negedge rst_n) begin
 	end else if (op_kill || (op_vld && op_rdy)) begin
 		// Initialise circuit with operands + state
 		ctr <= op_vld ? CTR_TOP : {W_CTR{1'b0}};
+		ctr_nz <= op_vld;
 		sign_preadj_done <= !op_vld;
 		sign_postadj_done <= !op_vld;
 		sign_postadj_carry <= 1'b0;
@@ -165,10 +168,12 @@ always @ (posedge clk or negedge rst_n) begin
 				op_b_r <= -op_b_r;
 		end else begin
 			ctr <= ctr - UNROLL[W_CTR-1:0];
+			ctr_nz <= ctr != UNROLL[W_CTR-1:0];
 			accum <= accum_next;
 		end
 	end else if (|ctr) begin
 		ctr <= ctr - UNROLL[W_CTR-1:0];
+		ctr_nz <= ctr != UNROLL[W_CTR-1:0];
 		accum <= accum_next;
 	end else if (!sign_postadj_done || sign_postadj_carry) begin
 		sign_postadj_done <= 1'b1;
@@ -205,7 +210,7 @@ end
 // - Negate lower half of accumulator, and invert upper half
 // - Increment upper half if lower half carried
 
-wire do_postadj = ~|{ctr, sign_postadj_done};
+wire do_postadj = ~|{ctr_nz, sign_postadj_done};
 wire op_signs_differ = op_a_neg_r ^ op_b_neg_r;
 
 assign accum_neg_l =
@@ -221,7 +226,7 @@ assign {accum_incr_h, accum_inv_h} =
 // ----------------------------------------------------------------------------
 // Outputs
 
-assign op_rdy = ~|{ctr, accum_neg_l, accum_incr_h, accum_inv_h};
+assign op_rdy = ~|{ctr_nz, accum_neg_l, accum_incr_h, accum_inv_h};
 assign result_vld = op_rdy;
 
 `ifndef RISCV_FORMAL_ALTOPS
