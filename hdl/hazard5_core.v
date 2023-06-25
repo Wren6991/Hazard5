@@ -333,7 +333,7 @@ wire x_except_store_misaligned = x_memop_vld && x_unaligned_addr && x_memop_writ
 
 always @ (*) begin
 	// Need to be careful not to use anything hready-sourced to gate htrans!
-	bus_haddr_d = x_alu_add;
+	bus_haddr_d = x_rs1_bypass + {{20{dx_imm[11]}}, dx_imm[11:0]};
 	bus_hwrite_d = x_memop_write;
 	case (dx_memop)
 		MEMOP_LW:  bus_hsize_d = HSIZE_WORD;
