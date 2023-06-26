@@ -175,6 +175,12 @@ always @ (posedge clk or negedge rst_n) begin
 		ctr <= ctr - UNROLL[W_CTR-1:0];
 		ctr_nz <= ctr != UNROLL[W_CTR-1:0];
 		accum <= accum_next;
+		// Skip post-adjustment for unsigned calculations to save a cycle or
+		// two. Don't do this until the last iteration because this flag is
+		// used as the "everything done" flag.
+		if (ctr == UNROLL[W_CTR-1:0] && !op_a_signed && !op_b_signed) begin
+			sign_postadj_done <= 1'b1;
+		end
 	end else if (!sign_postadj_done || sign_postadj_carry) begin
 		sign_postadj_done <= 1'b1;
 		if (accum_inv_h || accum_incr_h)
@@ -226,7 +232,7 @@ assign {accum_incr_h, accum_inv_h} =
 // ----------------------------------------------------------------------------
 // Outputs
 
-assign op_rdy = ~|{ctr_nz, accum_neg_l, accum_incr_h, accum_inv_h};
+assign op_rdy = sign_postadj_done;
 assign result_vld = op_rdy;
 
 `ifndef RISCV_FORMAL_ALTOPS

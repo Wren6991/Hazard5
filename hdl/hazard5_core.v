@@ -495,7 +495,7 @@ if (EXTENSION_M) begin: has_muldiv
 		dx_mulop == M_OP_REM ||
 		dx_mulop == M_OP_REMU;
 	assign x_muldiv_result = x_muldiv_result_is_high ? x_muldiv_result_h : x_muldiv_result_l;
-	assign x_stall_muldiv = x_muldiv_op_vld || !x_muldiv_result_vld;
+	assign x_stall_muldiv = (dx_aluop == ALUOP_MULDIV && !x_use_fast_mul && !x_muldiv_posted) || !x_muldiv_result_vld;
 
 	if (MUL_FAST) begin: has_fast_mul
 
