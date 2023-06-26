@@ -44,8 +44,8 @@ module hazard5_decode #(
 	input wire                  f_jump_now,
 	input wire  [W_ADDR-1:0]    f_jump_target,
 
-	output reg  [W_REGADDR-1:0] d_rs1, // combinatorial
-	output reg  [W_REGADDR-1:0] d_rs2, // combinatorial
+	output wire [W_REGADDR-1:0] d_early_rs1,
+	output wire [W_REGADDR-1:0] d_early_rs2,
 
 	output reg  [W_DATA-1:0]    dx_imm,
 	output reg  [W_REGADDR-1:0] dx_rs1,
@@ -178,6 +178,8 @@ wire [31:0] d_imm_j = {{12{d_instr[31]}}, d_instr[19:12], d_instr[20], d_instr[3
 
 // Combinatorials:
 reg  [W_REGADDR-1:0] d_rd;
+reg  [W_REGADDR-1:0] d_rs1;
+reg  [W_REGADDR-1:0] d_rs2;
 reg  [W_DATA-1:0]    d_imm;
 reg  [W_DATA-1:0]    d_branchoffs;
 reg  [W_ALUSRC-1:0]  d_alusrc_a;
@@ -360,5 +362,15 @@ always @ (posedge clk) begin
 		`endif
 	end
 end
+
+// "Early" regnums -- these are just the raw instruction bits, *except* in
+//  cases where we rely on the reg zeroing logic to force an ALU input to
+//  zero even when there may be a nonzero regnum in the instruction bits.
+//  Currently the only example of this is LUI.
+
+// assign d_early_rs1 = d_rs1;
+// assign d_early_rs2 = d_rs2;
+assign d_early_rs1 = d_instr[6:0] == RV_LUI[6:0] ? X0 : d_instr[19:15];
+assign d_early_rs2 = d_instr[24:20];
 
 endmodule

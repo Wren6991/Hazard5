@@ -168,8 +168,8 @@ end
 wire [W_ADDR-1:0]    d_pc; // FIXME only used for riscv-formal
 
 // To register file
-wire [W_REGADDR-1:0] d_rs1;
-wire [W_REGADDR-1:0] d_rs2;
+wire [W_REGADDR-1:0] d_early_rs1;
+wire [W_REGADDR-1:0] d_early_rs2;
 
 // To X
 wire [W_DATA-1:0]    dx_imm;
@@ -222,8 +222,8 @@ hazard5_decode #(
 	.f_jump_now            (f_jump_now),
 	.f_jump_target         (f_jump_target),
 
-	.d_rs1                 (d_rs1),
-	.d_rs2                 (d_rs2),
+	.d_early_rs1           (d_early_rs1),
+	.d_early_rs2           (d_early_rs2),
 	.dx_imm                (dx_imm),
 	.dx_rs1                (dx_rs1),
 	.dx_rs2                (dx_rs2),
@@ -703,9 +703,9 @@ hazard5_regfile_1w2r #(
 	.clk    (clk),
 	.rst_n  (rst_n),
 	.ren    (!x_stall),
-	.raddr1 (d_rs1),
+	.raddr1 (d_early_rs1),
 	.rdata1 (dx_rdata1),
-	.raddr2 (d_rs2),
+	.raddr2 (d_early_rs2),
 	.rdata2 (dx_rdata2),
 
 	.waddr  (xm_rd),
