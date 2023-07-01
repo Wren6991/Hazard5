@@ -321,6 +321,7 @@ assign x_stall = m_stall ||
 
 wire m_fast_mul_result_vld;
 wire m_generating_result = xm_memop < MEMOP_SW || m_fast_mul_result_vld;
+wire x_memop_is_store = dx_memop == MEMOP_SW || dx_memop == MEMOP_SH || dx_memop == MEMOP_SB;
 
 // Load-use hazard detection
 always @ (*) begin
@@ -336,7 +337,7 @@ always @ (*) begin
 			x_stall_raw = 1'b1;
 		end else if (dx_rs2_matches_xm_rd) begin
 			// Store data can be bypassed in M. Any other instructions must stall.
-			x_stall_raw = !(dx_memop == MEMOP_SW || dx_memop == MEMOP_SH || dx_memop == MEMOP_SB);
+			x_stall_raw = !x_memop_is_store;
 		end
 	end
 end
@@ -563,6 +564,7 @@ assign xm_rd_nxt =
 	m_stall                                ? xm_rd             :
 	(x_stall || flush_d_x || x_trap_enter) ? {W_REGADDR{1'b0}} : dx_rd;
 
+
 // State machine and branch detection
 always @ (posedge clk or negedge rst_n) begin
 	if (!rst_n) begin
@@ -603,6 +605,7 @@ always @ (posedge clk or negedge rst_n) begin
 end
 
 // No reset on datapath flops
+reg [W_DATA-1:0] m_result;
 always @ (posedge clk)
 	if (!m_stall) begin
 		xm_result <=
@@ -610,7 +613,8 @@ always @ (posedge clk)
 			dx_csr_ren                              ? x_csr_rdata :
 			EXTENSION_M && dx_aluop == ALUOP_MULDIV ? x_muldiv_result :
 			                                          x_alu_result;
-		xm_store_data <= x_rs2_bypass;
+		xm_store_data <= dx_rs2_matches_xm_rd && x_memop_is_store ? m_result : x_rs2_bypass;
+
 		xm_jump_target <= x_jump_target;
 	end
 
@@ -628,8 +632,7 @@ hazard5_alu alu (
 // ============================================================================
 
 reg [W_DATA-1:0] m_rdata_shift;
-reg [W_DATA-1:0] m_wdata;
-reg [W_DATA-1:0] m_result;
+reg [W_DATA-1:0] m_load_result;
 assign m_jump_req = xm_jump;
 assign m_jump_target = xm_jump_target;
 
@@ -639,16 +642,11 @@ wire m_except_bus_fault = bus_dph_err_d; // TODO: handle differently for LSU/ife
 
 always @ (*) begin
 	// Local forwarding of store data
-	if (|mw_rd && xm_rs2 == mw_rd && !REDUCED_BYPASS) begin
-		m_wdata = mw_result;
-	end else begin
-		m_wdata = xm_store_data;
-	end
 	// Replicate store data to ensure appropriate byte lane is driven
 	case (xm_memop)
-		MEMOP_SW: bus_wdata_d = m_wdata;
-		MEMOP_SH: bus_wdata_d = {2{m_wdata[15:0]}};
-		MEMOP_SB: bus_wdata_d = {4{m_wdata[7:0]}};
+		MEMOP_SW: bus_wdata_d = xm_store_data;
+		MEMOP_SH: bus_wdata_d = {2{xm_store_data[15:0]}};
+		MEMOP_SB: bus_wdata_d = {4{xm_store_data[7:0]}};
 		default:  bus_wdata_d = 32'h0;
 	endcase
 	// Pick out correct data from load access, and sign/unsign extend it.
@@ -659,21 +657,22 @@ always @ (*) begin
 		2'b10: m_rdata_shift = {bus_rdata_d[31:16], bus_rdata_d[31:16]};
 		2'b11: m_rdata_shift = {bus_rdata_d[31:8],  bus_rdata_d[31:24]};
 	endcase
-
 	case (xm_memop)
-		MEMOP_LW:  m_result = m_rdata_shift;
-		MEMOP_LH:  m_result = {{16{m_rdata_shift[15]}}, m_rdata_shift[15:0]};
-		MEMOP_LHU: m_result = {16'h0, m_rdata_shift[15:0]};
-		MEMOP_LB:  m_result = {{24{m_rdata_shift[7]}}, m_rdata_shift[7:0]};
-		MEMOP_LBU: m_result = {24'h0, m_rdata_shift[7:0]};
-		default:   begin
-			if (MUL_FAST && m_fast_mul_result_vld) begin
-				m_result = m_fast_mul_result;
-			end else begin
-				m_result = xm_result;
-			end
-		end
+		MEMOP_LW:  m_load_result = m_rdata_shift;
+		MEMOP_LH:  m_load_result = {{16{m_rdata_shift[15]}}, m_rdata_shift[15:0]};
+		MEMOP_LHU: m_load_result = {16'h0, m_rdata_shift[15:0]};
+		MEMOP_LB:  m_load_result = {{24{m_rdata_shift[7]}}, m_rdata_shift[7:0]};
+		// LBU: (only op with bit 2 set)
+		default  : m_load_result = {24'h0, m_rdata_shift[7:0]};
 	endcase
+	// Mux final result
+	if (xm_memop < MEMOP_SW) begin
+		m_result = m_load_result;
+	end else if (MUL_FAST && m_fast_mul_result_vld) begin
+		m_result = m_fast_mul_result;
+	end else begin
+		m_result = xm_result;
+	end
 end
 
 always @ (posedge clk or negedge rst_n) begin
