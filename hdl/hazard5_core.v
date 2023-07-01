@@ -165,7 +165,7 @@ always @ (posedge clk) begin
 end
 //synthesis translate_on
 
-wire [W_ADDR-1:0]    d_pc; // FIXME only used for riscv-formal
+wire [W_ADDR-1:0]    d_pc;
 
 // To register file
 wire [W_REGADDR-1:0] d_early_rs1;

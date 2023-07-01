@@ -35,7 +35,7 @@ module hazard5_decode #(
 	output wire                 df_cir_lock,
 	output reg                  d_jump_req,
 	output reg  [W_ADDR-1:0]    d_jump_target,
-	output wire [W_ADDR-1:0]    d_pc, // FIXME only added for riscv-formal
+	output wire [W_ADDR-1:0]    d_pc,
 
 	output wire                 d_stall,
 	input wire                  x_stall,
@@ -68,9 +68,6 @@ module hazard5_decode #(
 	output reg  [W_ADDR-1:0]    dx_mispredict_addr,
 	output reg  [2:0]           dx_except
 );
-
-
-// TODO TODO factor this out in a cleaner way, e.g. separate out registers and stall logic.
 
 `include "rv_opcodes.vh"
 `include "hazard5_ops.vh"
@@ -281,34 +278,58 @@ always @ (*) begin
 	endcase
 end
 
+// Muxing into main decode pipe register
 
-always @ (posedge clk or negedge rst_n) begin
-	if (!rst_n) begin
-		{dx_rs1, dx_rs2, dx_rd} <= {(3 * W_REGADDR){1'b0}};
-		dx_alusrc_a <= ALUSRCA_RS1;
-		dx_alusrc_b <= ALUSRCB_RS2;
-		dx_aluop <= ALUOP_ADD;
-		dx_memop <= MEMOP_NONE;
-		dx_mulop <= M_OP_MUL;
-		dx_csr_ren <= 1'b0;
-		dx_csr_wen <= 1'b0;
-		dx_csr_wtype <= CSR_WTYPE_W;
-		dx_csr_w_imm <= 1'b0;
-		dx_branchcond <= BCOND_NEVER;
-		dx_jump_is_regoffs <= 1'b0;
-		dx_result_is_linkaddr <= 1'b0;
-		dx_except <= EXCEPT_NONE;
-	end else if (flush_d_x || (d_stall && !x_stall)) begin
+reg  [W_DATA-1:0]    dx_imm_nxt;
+reg  [W_REGADDR-1:0] dx_rs1_nxt;
+reg  [W_REGADDR-1:0] dx_rs2_nxt;
+reg  [W_REGADDR-1:0] dx_rd_nxt;
+reg  [W_ALUSRC-1:0]  dx_alusrc_a_nxt;
+reg  [W_ALUSRC-1:0]  dx_alusrc_b_nxt;
+reg  [W_ALUOP-1:0]   dx_aluop_nxt;
+reg  [W_MEMOP-1:0]   dx_memop_nxt;
+reg  [W_MULOP-1:0]   dx_mulop_nxt;
+reg                  dx_csr_ren_nxt;
+reg                  dx_csr_wen_nxt;
+reg  [1:0]           dx_csr_wtype_nxt;
+reg                  dx_csr_w_imm_nxt;
+reg  [W_BCOND-1:0]   dx_branchcond_nxt;
+reg  [W_ADDR-1:0]    dx_jump_target_nxt;
+reg                  dx_jump_is_regoffs_nxt;
+reg                  dx_result_is_linkaddr_nxt;
+reg  [W_ADDR-1:0]    dx_pc_nxt;
+reg  [W_ADDR-1:0]    dx_mispredict_addr_nxt;
+reg  [2:0]           dx_except_nxt;
+
+always @ (*) begin
+	// Default: no change
+	dx_rs1_nxt = dx_rs1;
+	dx_rs2_nxt = dx_rs2;
+	dx_rd_nxt = dx_rd;
+	dx_alusrc_a_nxt = dx_alusrc_a;
+	dx_alusrc_b_nxt = dx_alusrc_b;
+	dx_aluop_nxt = dx_aluop;
+	dx_memop_nxt = dx_memop;
+	dx_mulop_nxt = dx_mulop;
+	dx_csr_ren_nxt = dx_csr_ren;
+	dx_csr_wen_nxt = dx_csr_wen;
+	dx_csr_wtype_nxt = dx_csr_wtype;
+	dx_csr_w_imm_nxt = dx_csr_w_imm;
+	dx_branchcond_nxt = dx_branchcond;
+	dx_jump_is_regoffs_nxt = dx_jump_is_regoffs;
+	dx_result_is_linkaddr_nxt = dx_result_is_linkaddr;
+	dx_except_nxt = dx_except;
+	if (flush_d_x || (d_stall && !x_stall)) begin
 		// Bubble insertion
-		dx_branchcond <= BCOND_NEVER;
-		dx_memop <= MEMOP_NONE;
-		dx_rd <= 5'h0;
-		dx_except <= EXCEPT_NONE;
-		dx_csr_ren <= 1'b0;
-		dx_csr_wen <= 1'b0;
+		dx_branchcond_nxt = BCOND_NEVER;
+		dx_memop_nxt = MEMOP_NONE;
+		dx_rd_nxt = 5'h0;
+		dx_except_nxt = EXCEPT_NONE;
+		dx_csr_ren_nxt = 1'b0;
+		dx_csr_wen_nxt = 1'b0;
 		// Don't start a multiply in a pipe bubble
 		if (EXTENSION_M)
-			dx_aluop <= ALUOP_ADD;
+			dx_aluop_nxt = ALUOP_ADD;
 		// Also need to clear rs1, rs2, due to a nasty sequence of events:
 		// Suppose we have a load, followed by a dependent branch, which is predicted taken
 		// - branch will stall in D until AHB master becomes free
@@ -316,28 +337,68 @@ always @ (posedge clk or negedge rst_n) begin
 		// - if X gets branch's rs1, rs2, it will cause spurious RAW stall
 		// - on next cycle, branch will not progress into X due to RAW stall, but *will* be replaced in D due to jump
 		// - branch mispredict now cannot be corrected
-		dx_rs1 <= 5'h0;
-		dx_rs2 <= 5'h0;
+		dx_rs1_nxt = 5'h0;
+		dx_rs2_nxt = 5'h0;
 	end else if (!x_stall) begin
 		// These ones can have side effects
-		dx_rs1        <= d_invalid ? {W_REGADDR{1'b0}}    : d_rs1;
-		dx_rs2        <= d_invalid ? {W_REGADDR{1'b0}}    : d_rs2;
-		dx_rd         <= d_invalid ? {W_REGADDR{1'b0}}    : d_rd;
-		dx_memop      <= d_invalid ? MEMOP_NONE           : d_memop;
-		dx_branchcond <= d_invalid ? BCOND_NEVER          : d_branchcond;
-		dx_csr_ren    <= d_invalid ? 1'b0                 : d_csr_ren;
-		dx_csr_wen    <= d_invalid ? 1'b0                 : d_csr_wen;
-		dx_except     <= d_invalid ? EXCEPT_INSTR_ILLEGAL : d_except;
-		dx_aluop      <= d_invalid && EXTENSION_M ? ALUOP_ADD : d_aluop;
+		dx_rs1_nxt        = d_invalid ? {W_REGADDR{1'b0}}    : d_rs1;
+		dx_rs2_nxt        = d_invalid ? {W_REGADDR{1'b0}}    : d_rs2;
+		dx_rd_nxt         = d_invalid ? {W_REGADDR{1'b0}}    : d_rd;
+		dx_memop_nxt      = d_invalid ? MEMOP_NONE           : d_memop;
+		dx_branchcond_nxt = d_invalid ? BCOND_NEVER          : d_branchcond;
+		dx_csr_ren_nxt    = d_invalid ? 1'b0                 : d_csr_ren;
+		dx_csr_wen_nxt    = d_invalid ? 1'b0                 : d_csr_wen;
+		dx_except_nxt     = d_invalid ? EXCEPT_INSTR_ILLEGAL : d_except;
+		dx_aluop_nxt      = d_invalid && EXTENSION_M ? ALUOP_ADD : d_aluop;
 
 		// These can't
-		dx_alusrc_a <= d_alusrc_a;
-		dx_alusrc_b <= d_alusrc_b;
-		dx_mulop <= d_mulop;
-		dx_jump_is_regoffs <= d_jump_is_regoffs;
-		dx_result_is_linkaddr <= d_result_is_linkaddr;
-		dx_csr_wtype <= d_csr_wtype;
-		dx_csr_w_imm <= d_csr_w_imm;
+		dx_alusrc_a_nxt = d_alusrc_a;
+		dx_alusrc_b_nxt = d_alusrc_b;
+		dx_mulop_nxt = d_mulop;
+		dx_jump_is_regoffs_nxt = d_jump_is_regoffs;
+		dx_result_is_linkaddr_nxt = d_result_is_linkaddr;
+		dx_csr_wtype_nxt = d_csr_wtype;
+		dx_csr_w_imm_nxt = d_csr_w_imm;
+	end
+end
+
+// Main decode pipe register
+
+always @ (posedge clk or negedge rst_n) begin
+	if (!rst_n) begin
+		dx_rs1                <= {W_REGADDR{1'b0}};
+		dx_rs2                <= {W_REGADDR{1'b0}};
+		dx_rd                 <= {W_REGADDR{1'b0}};
+		dx_alusrc_a           <= ALUSRCA_RS1;
+		dx_alusrc_b           <= ALUSRCB_RS2;
+		dx_aluop              <= ALUOP_ADD;
+		dx_memop              <= MEMOP_NONE;
+		dx_mulop              <= M_OP_MUL;
+		dx_csr_ren            <= 1'b0;
+		dx_csr_wen            <= 1'b0;
+		dx_csr_wtype          <= CSR_WTYPE_W;
+		dx_csr_w_imm          <= 1'b0;
+		dx_branchcond         <= BCOND_NEVER;
+		dx_jump_is_regoffs    <= 1'b0;
+		dx_result_is_linkaddr <= 1'b0;
+		dx_except             <= EXCEPT_NONE;
+	end else if (!x_stall || (d_stall && !x_stall) || flush_d_x) begin
+		dx_rs1                <= dx_rs1_nxt;
+		dx_rs2                <= dx_rs2_nxt;
+		dx_rd                 <= dx_rd_nxt;
+		dx_alusrc_a           <= dx_alusrc_a_nxt;
+		dx_alusrc_b           <= dx_alusrc_b_nxt;
+		dx_aluop              <= dx_aluop_nxt;
+		dx_memop              <= dx_memop_nxt;
+		dx_mulop              <= dx_mulop_nxt;
+		dx_csr_ren            <= dx_csr_ren_nxt;
+		dx_csr_wen            <= dx_csr_wen_nxt;
+		dx_csr_wtype          <= dx_csr_wtype_nxt;
+		dx_csr_w_imm          <= dx_csr_w_imm_nxt;
+		dx_branchcond         <= dx_branchcond_nxt;
+		dx_jump_is_regoffs    <= dx_jump_is_regoffs_nxt;
+		dx_result_is_linkaddr <= dx_result_is_linkaddr_nxt;
+		dx_except             <= dx_except_nxt;
 	end
 end
 
@@ -368,8 +429,6 @@ end
 //  zero even when there may be a nonzero regnum in the instruction bits.
 //  Currently the only example of this is LUI.
 
-// assign d_early_rs1 = d_rs1;
-// assign d_early_rs2 = d_rs2;
 assign d_early_rs1 = d_instr[6:0] == RV_LUI[6:0] ? X0 : d_instr[19:15];
 assign d_early_rs2 = d_instr[24:20];
 
