@@ -171,6 +171,10 @@ wire [W_ADDR-1:0]    d_pc;
 wire [W_REGADDR-1:0] d_early_rs1;
 wire [W_REGADDR-1:0] d_early_rs2;
 
+// To bypass control decode
+wire [W_REGADDR-1:0] dx_rs1_nxt;
+wire [W_REGADDR-1:0] dx_rs2_nxt;
+
 // To X
 wire [W_DATA-1:0]    dx_imm;
 wire [W_REGADDR-1:0] dx_rs1;
@@ -224,6 +228,8 @@ hazard5_decode #(
 
 	.d_early_rs1           (d_early_rs1),
 	.d_early_rs2           (d_early_rs2),
+	.dx_rs1_nxt            (dx_rs1_nxt),
+	.dx_rs2_nxt            (dx_rs2_nxt),
 	.dx_imm                (dx_imm),
 	.dx_rs1                (dx_rs1),
 	.dx_rs2                (dx_rs2),
@@ -245,6 +251,22 @@ hazard5_decode #(
 	.dx_mispredict_addr    (dx_mispredict_addr),
 	.dx_except             (dx_except)
 );
+
+// Early decode of bypass mux controls
+
+wire [4:0] xm_rd_nxt;
+reg        dx_rs1_matches_xm_rd;
+reg        dx_rs2_matches_xm_rd;
+
+always @ (posedge clk or negedge rst_n) begin
+	if (!rst_n) begin
+		dx_rs1_matches_xm_rd <= 1'b0;
+		dx_rs2_matches_xm_rd <= 1'b0;
+	end else begin
+		dx_rs1_matches_xm_rd <= |dx_rs1_nxt && dx_rs1_nxt == xm_rd_nxt;
+		dx_rs2_matches_xm_rd <= |dx_rs2_nxt && dx_rs2_nxt == xm_rd_nxt;
+	end
+end
 
 // ============================================================================
 //                               Pipe Stage X
@@ -305,14 +327,14 @@ always @ (*) begin
 	x_stall_raw = 1'b0;
 	if (REDUCED_BYPASS) begin
 		x_stall_raw =
-			|xm_rd && (xm_rd == dx_rs1 || xm_rd == dx_rs2) ||
-			|mw_rd && (mw_rd == dx_rs1 || mw_rd == dx_rs2);
+			(dx_rs1_matches_xm_rd || dx_rs2_matches_xm_rd) ||
+			(|mw_rd && (mw_rd == dx_rs1 || mw_rd == dx_rs2));
 	end else if (m_generating_result) begin
 		// With the full bypass network, load-use (or fast multiply-use) is the only RAW stall
-		if (|xm_rd && xm_rd == dx_rs1) begin
+		if (dx_rs1_matches_xm_rd) begin
 			// Store addresses cannot be bypassed later, so there is no exception here.
 			x_stall_raw = 1'b1;
-		end else if (|xm_rd && xm_rd == dx_rs2) begin
+		end else if (dx_rs2_matches_xm_rd) begin
 			// Store data can be bypassed in M. Any other instructions must stall.
 			x_stall_raw = !(dx_memop == MEMOP_SW || dx_memop == MEMOP_SH || dx_memop == MEMOP_SB);
 		end
@@ -351,12 +373,12 @@ end
 
 // ALU operand muxes and bypass
 always @ (*) begin
-	if (|dx_rs1 && dx_rs1 == xm_rd) begin
+	if (dx_rs1_matches_xm_rd) begin
 		x_rs1_bypass = xm_result;
 	end else begin
 		x_rs1_bypass = dx_rdata1;
 	end
-	if (|dx_rs2 && dx_rs2 == xm_rd) begin
+	if (dx_rs2_matches_xm_rd) begin
 		x_rs2_bypass = xm_result;
 	end else begin
 		x_rs2_bypass = dx_rdata2;
@@ -536,17 +558,26 @@ end else begin: no_muldiv
 end
 endgenerate
 
+// For use in early decode of bypass controls, must match result of below logic:
+assign xm_rd_nxt =
+	m_stall                                ? xm_rd             :
+	(x_stall || flush_d_x || x_trap_enter) ? {W_REGADDR{1'b0}} : dx_rd;
+
 // State machine and branch detection
 always @ (posedge clk or negedge rst_n) begin
 	if (!rst_n) begin
 		xm_jump <= 1'b0;
 		xm_memop <= MEMOP_NONE;
-		{xm_rs1, xm_rs2, xm_rd} <= {3 * W_REGADDR{1'b0}};
+		xm_rs1 <= {W_REGADDR{1'b0}};
+		xm_rs2 <= {W_REGADDR{1'b0}};
+		xm_rd <= {W_REGADDR{1'b0}};
 	end else begin
 		// TODO: this assertion may become untrue depending on how we handle exceptions/IRQs when stalled?
 		//`ASSERT(!(m_stall && flush_d_x));// bubble insertion logic below is broken otherwise
 		if (!m_stall) begin
-			{xm_rs1, xm_rs2, xm_rd} <= {dx_rs1, dx_rs2, dx_rd};
+			xm_rs1 <= dx_rs1;
+			xm_rs2 <= dx_rs2;
+			xm_rd <= dx_rd;
 			// If the transfer is unaligned, make sure it is completely NOP'd on the bus
 			xm_memop <= dx_memop | {x_unaligned_addr, 3'h0};
 			if (x_stall || flush_d_x || x_trap_enter) begin

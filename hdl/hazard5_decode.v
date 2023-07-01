@@ -44,8 +44,13 @@ module hazard5_decode #(
 	input wire                  f_jump_now,
 	input wire  [W_ADDR-1:0]    f_jump_target,
 
+	// Coarse decode, used for register file read
 	output wire [W_REGADDR-1:0] d_early_rs1,
 	output wire [W_REGADDR-1:0] d_early_rs2,
+
+	// Tapped directly from the pipe register input
+	output reg  [W_REGADDR-1:0] dx_rs1_nxt,
+	output reg  [W_REGADDR-1:0] dx_rs2_nxt,
 
 	output reg  [W_DATA-1:0]    dx_imm,
 	output reg  [W_REGADDR-1:0] dx_rs1,
@@ -281,8 +286,8 @@ end
 // Muxing into main decode pipe register
 
 reg  [W_DATA-1:0]    dx_imm_nxt;
-reg  [W_REGADDR-1:0] dx_rs1_nxt;
-reg  [W_REGADDR-1:0] dx_rs2_nxt;
+// dx_rs1_nxt is a module port
+// dx_rs2_nxt is a module port
 reg  [W_REGADDR-1:0] dx_rd_nxt;
 reg  [W_ALUSRC-1:0]  dx_alusrc_a_nxt;
 reg  [W_ALUSRC-1:0]  dx_alusrc_b_nxt;
